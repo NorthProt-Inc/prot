@@ -7,6 +7,7 @@ import pytest
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 os.environ.setdefault("DEEPGRAM_API_KEY", "test-key")
 os.environ.setdefault("ELEVENLABS_API_KEY", "test-key")
+os.environ.setdefault("VOYAGE_API_KEY", "test-key")
 
 
 @pytest.fixture
