@@ -58,7 +58,7 @@ class MemoryExtractor:
             return {"entities": [], "relationships": []}
 
     async def save_extraction(self, extraction: dict) -> None:
-        """Embed and save extracted entities and relationships."""
+        """Embed and save extracted entities and relationships in a single transaction."""
         entities = extraction.get("entities", [])
         relationships = extraction.get("relationships", [])
 
@@ -68,26 +68,30 @@ class MemoryExtractor:
         descriptions = [e["description"] for e in entities]
         embeddings = await self._embedder.embed_texts(descriptions)
 
-        entity_ids = {}
-        for entity, embedding in zip(entities, embeddings):
-            eid = await self._store.upsert_entity(
-                name=entity["name"],
-                entity_type=entity["type"],
-                description=entity["description"],
-                embedding=embedding,
-            )
-            entity_ids[entity["name"]] = eid
+        async with self._store.acquire() as conn:
+            async with conn.transaction():
+                entity_ids = {}
+                for entity, embedding in zip(entities, embeddings):
+                    eid = await self._store.upsert_entity(
+                        name=entity["name"],
+                        entity_type=entity["type"],
+                        description=entity["description"],
+                        embedding=embedding,
+                        conn=conn,
+                    )
+                    entity_ids[entity["name"]] = eid
 
-        for rel in relationships:
-            src_id = entity_ids.get(rel["source"])
-            tgt_id = entity_ids.get(rel["target"])
-            if src_id and tgt_id:
-                await self._store.upsert_relationship(
-                    source_id=src_id,
-                    target_id=tgt_id,
-                    relation_type=rel["type"],
-                    description=rel["description"],
-                )
+                for rel in relationships:
+                    src_id = entity_ids.get(rel["source"])
+                    tgt_id = entity_ids.get(rel["target"])
+                    if src_id and tgt_id:
+                        await self._store.upsert_relationship(
+                            source_id=src_id,
+                            target_id=tgt_id,
+                            relation_type=rel["type"],
+                            description=rel["description"],
+                            conn=conn,
+                        )
 
     async def pre_load_context(self, query: str) -> str:
         """Search GraphRAG and assemble Block 2 context text."""

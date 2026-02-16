@@ -68,6 +68,27 @@ class TestUpsertEntity:
         assert conn.fetchrow.await_count == 1
 
 
+    async def test_upsert_entity_with_provided_conn(self) -> None:
+        pool, _ = make_mock_pool()
+        store = GraphRAGStore(pool)
+
+        new_id = uuid4()
+        ext_conn = AsyncMock()
+        ext_conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
+
+        result = await store.upsert_entity(
+            name="TestEntity",
+            entity_type="person",
+            description="A test entity",
+            conn=ext_conn,
+        )
+
+        assert result == new_id
+        ext_conn.fetchrow.assert_awaited_once()
+        # Pool should NOT have been used
+        pool.acquire.assert_not_called()
+
+
 class TestGetEntityByName:
     """get_entity_by_name should return dict or None."""
 
@@ -132,6 +153,27 @@ class TestUpsertRelationship:
         assert "INSERT" in call.args[0]
         assert "ON CONFLICT" in call.args[0]
         assert "relationships" in call.args[0]
+
+
+    async def test_upsert_relationship_with_provided_conn(self) -> None:
+        pool, _ = make_mock_pool()
+        store = GraphRAGStore(pool)
+
+        rel_id = uuid4()
+        ext_conn = AsyncMock()
+        ext_conn.fetchrow = AsyncMock(return_value=mock_record(id=rel_id))
+
+        result = await store.upsert_relationship(
+            source_id=uuid4(),
+            target_id=uuid4(),
+            relation_type="works_with",
+            description="Collaborative relationship",
+            conn=ext_conn,
+        )
+
+        assert result == rel_id
+        ext_conn.fetchrow.assert_awaited_once()
+        pool.acquire.assert_not_called()
 
 
 class TestSearchEntitiesSemantic:

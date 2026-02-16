@@ -13,6 +13,10 @@ class GraphRAGStore:
     def __init__(self, pool: asyncpg.Pool):
         self._pool = pool
 
+    def acquire(self):
+        """Acquire a connection from the pool (async context manager)."""
+        return self._pool.acquire()
+
     async def upsert_entity(
         self,
         name: str,
@@ -20,24 +24,23 @@ class GraphRAGStore:
         description: str,
         embedding: list[float] | None = None,
         namespace: str = "default",
+        conn: asyncpg.Connection | None = None,
     ) -> UUID:
         """Insert or update entity. Increments mention_count on conflict."""
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """INSERT INTO entities (namespace, name, entity_type, description, name_embedding)
+        query = """INSERT INTO entities (namespace, name, entity_type, description, name_embedding)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (namespace, name)
                 DO UPDATE SET description = EXCLUDED.description,
                              mention_count = entities.mention_count + 1,
                              name_embedding = COALESCE(EXCLUDED.name_embedding, entities.name_embedding),
                              updated_at = now()
-                RETURNING id""",
-                namespace,
-                name,
-                entity_type,
-                description,
-                embedding,
-            )
+                RETURNING id"""
+        args = (namespace, name, entity_type, description, embedding)
+        if conn is not None:
+            row = await conn.fetchrow(query, *args)
+            return row["id"]
+        async with self._pool.acquire() as c:
+            row = await c.fetchrow(query, *args)
             return row["id"]
 
     async def get_entity_by_name(
@@ -59,23 +62,22 @@ class GraphRAGStore:
         relation_type: str,
         description: str,
         weight: float = 1.0,
+        conn: asyncpg.Connection | None = None,
     ) -> UUID:
         """Insert or update a relationship between two entities."""
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """INSERT INTO relationships (source_id, target_id, relation_type, description, weight)
+        query = """INSERT INTO relationships (source_id, target_id, relation_type, description, weight)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (source_id, target_id, relation_type)
                 DO UPDATE SET description = EXCLUDED.description,
                              weight = EXCLUDED.weight,
                              updated_at = now()
-                RETURNING id""",
-                source_id,
-                target_id,
-                relation_type,
-                description,
-                weight,
-            )
+                RETURNING id"""
+        args = (source_id, target_id, relation_type, description, weight)
+        if conn is not None:
+            row = await conn.fetchrow(query, *args)
+            return row["id"]
+        async with self._pool.acquire() as c:
+            row = await c.fetchrow(query, *args)
             return row["id"]
 
     async def search_entities_semantic(
@@ -130,7 +132,11 @@ class GraphRAGStore:
     async def get_entity_neighbors(
         self, entity_id: UUID, max_depth: int = 1
     ) -> list[dict]:
-        """Get neighboring entities via relationships using recursive CTE."""
+        """Get neighboring entities via relationships using recursive CTE.
+
+        The recursive step uses two UNION ALL branches instead of OR so that
+        each branch can use its respective index (source_id or target_id).
+        """
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -141,10 +147,14 @@ class GraphRAGStore:
                     SELECT source_id AS id, 1 AS depth
                     FROM relationships WHERE target_id = $1
                     UNION ALL
-                    SELECT CASE WHEN r.source_id = n.id THEN r.target_id ELSE r.source_id END,
-                           n.depth + 1
+                    SELECT r.target_id, n.depth + 1
                     FROM neighbors n
-                    JOIN relationships r ON r.source_id = n.id OR r.target_id = n.id
+                    JOIN relationships r ON r.source_id = n.id
+                    WHERE n.depth < $2
+                    UNION ALL
+                    SELECT r.source_id, n.depth + 1
+                    FROM neighbors n
+                    JOIN relationships r ON r.target_id = n.id
                     WHERE n.depth < $2
                 )
                 SELECT DISTINCT e.id, e.name, e.entity_type, e.description

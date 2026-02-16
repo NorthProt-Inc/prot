@@ -1,6 +1,23 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 from prot.memory import MemoryExtractor
+
+
+def _make_store_with_conn():
+    """Create mock store with acquire() returning an async context manager."""
+    mock_store = AsyncMock()
+    mock_conn = AsyncMock()
+    # conn.transaction() returns an async context manager (sync call)
+    mock_tx = MagicMock()
+    mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
+    mock_tx.__aexit__ = AsyncMock(return_value=False)
+    mock_conn.transaction = MagicMock(return_value=mock_tx)
+    # acquire() returns an async context manager (sync call)
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_store.acquire = MagicMock(return_value=mock_ctx)
+    return mock_store, mock_conn
 
 
 @pytest.mark.asyncio
@@ -23,7 +40,7 @@ class TestMemoryExtractor:
             assert result["entities"][0]["name"] == "Bob"
 
     async def test_save_extraction_calls_store(self):
-        mock_store = AsyncMock()
+        mock_store, mock_conn = _make_store_with_conn()
         mock_store.upsert_entity.return_value = "fake-uuid"
         mock_embedder = AsyncMock()
         mock_embedder.embed_texts.return_value = [[0.1] * 1024]
@@ -37,6 +54,9 @@ class TestMemoryExtractor:
         })
         mock_store.upsert_entity.assert_called_once()
         mock_embedder.embed_texts.assert_called_once()
+        # Verify conn was passed through
+        call_kwargs = mock_store.upsert_entity.call_args.kwargs
+        assert call_kwargs["conn"] is mock_conn
 
     async def test_pre_load_context_returns_text(self):
         mock_store = AsyncMock()
@@ -56,7 +76,7 @@ class TestMemoryExtractor:
 
     async def test_save_extraction_with_relationships(self):
         """Verify upsert_relationship is called when extraction has relationships."""
-        mock_store = AsyncMock()
+        mock_store, mock_conn = _make_store_with_conn()
         mock_store.upsert_entity.side_effect = ["uuid-bob", "uuid-alice"]
         mock_embedder = AsyncMock()
         mock_embedder.embed_texts.return_value = [[0.1] * 1024, [0.2] * 1024]
@@ -83,6 +103,7 @@ class TestMemoryExtractor:
             target_id="uuid-alice",
             relation_type="knows",
             description="Bob knows Alice from work",
+            conn=mock_conn,
         )
 
     async def test_save_extraction_empty_entities_returns_early(self):

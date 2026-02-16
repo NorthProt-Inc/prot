@@ -156,8 +156,8 @@ class Pipeline:
                 full_response += chunk
                 buffer += chunk
 
-                for sentence in chunk_sentences(buffer):
-                    buffer = ""
+                sentences, buffer = chunk_sentences(buffer)
+                for sentence in sentences:
                     clean = sanitize_for_tts(sentence)
                     if not clean:
                         continue

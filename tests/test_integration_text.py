@@ -23,8 +23,8 @@ async def test_text_to_text_pipeline():
 
     assert len(raw) > 0
     sanitized = sanitize_for_tts(raw)
-    sentences = list(chunk_sentences(sanitized))
-    assert len(sentences) >= 1
+    sentences, remainder = chunk_sentences(sanitized)
+    assert len(sentences) + (1 if remainder else 0) >= 1
     # Verify no markdown artifacts
     assert "**" not in sanitized
     assert "##" not in sanitized

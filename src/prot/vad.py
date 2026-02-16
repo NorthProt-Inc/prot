@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 
 
 class VADProcessor:
@@ -30,8 +29,7 @@ class VADProcessor:
 
     def is_speech(self, pcm_bytes: bytes) -> bool:
         """Check if PCM audio chunk contains speech."""
-        audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        tensor = torch.from_numpy(audio)
+        tensor = torch.frombuffer(pcm_bytes, dtype=torch.int16).to(torch.float32).div_(32768.0)
         prob = self._model(tensor, self._sample_rate).item()
 
         if prob >= self._threshold:
