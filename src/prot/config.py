@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # TTS
     elevenlabs_model: str = "eleven_multilingual_v2"
     elevenlabs_voice_id: str = "Fahco4VZzobUeiPqni1S"
-    elevenlabs_output_format: str = "pcm_16000"
+    elevenlabs_output_format: str = "pcm_24000"
 
     # HASS
     hass_url: str = "http://localhost:8123"

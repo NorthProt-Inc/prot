@@ -12,7 +12,7 @@ class AudioPlayer:
     """Async wrapper around paplay for PCM audio output."""
 
     def __init__(
-        self, rate: int = 16000, channels: int = 1, format: str = "s16le"
+        self, rate: int = 24000, channels: int = 1, format: str = "s16le"
     ) -> None:
         if format not in _VALID_FORMATS:
             raise ValueError(f"Invalid format: {format}")
