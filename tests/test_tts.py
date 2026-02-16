@@ -15,7 +15,7 @@ class TestTTSClient:
         with patch("prot.tts.AsyncElevenLabs") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.text_to_speech.stream = AsyncMock(
+            mock_client.text_to_speech.stream = MagicMock(
                 return_value=mock_response
             )
 
@@ -35,7 +35,7 @@ class TestTTSClient:
         with patch("prot.tts.AsyncElevenLabs") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.text_to_speech.stream = AsyncMock(
+            mock_client.text_to_speech.stream = MagicMock(
                 return_value=mock_response
             )
 
@@ -60,7 +60,7 @@ class TestTTSClient:
         with patch("prot.tts.AsyncElevenLabs") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.text_to_speech.stream = AsyncMock(
+            mock_client.text_to_speech.stream = MagicMock(
                 return_value=mock_response
             )
 
@@ -90,7 +90,7 @@ class TestTTSClient:
         with patch("prot.tts.AsyncElevenLabs") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.text_to_speech.stream = AsyncMock(
+            mock_client.text_to_speech.stream = MagicMock(
                 return_value=slow_iter()
             )
 
@@ -113,7 +113,7 @@ class TestTTSClient:
         with patch("prot.tts.AsyncElevenLabs") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.text_to_speech.stream = AsyncMock(
+            mock_client.text_to_speech.stream = MagicMock(
                 return_value=mock_response
             )
 

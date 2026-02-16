@@ -1,16 +1,16 @@
 [Unit]
 Description=prot voice conversation service
-After=network.target pulseaudio.service
+After=pipewire-pulse.service
+Requires=pipewire-pulse.service
 
 [Service]
 Type=simple
-User=cyan
 WorkingDirectory=/home/cyan/workplace/prot
-Environment=PATH=/home/cyan/.local/bin:/usr/local/bin:/usr/bin
 EnvironmentFile=/home/cyan/workplace/prot/.env
-ExecStart=/home/cyan/workplace/prot/.venv/bin/uvicorn prot.app:app --host 0.0.0.0 --port 8000
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/cyan/workplace/prot/.venv/bin/uvicorn prot.app:app --host 0.0.0.0 --port 8000 --log-level info
 Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

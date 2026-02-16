@@ -6,7 +6,7 @@ from prot.config import settings
 
 
 class AsyncVoyageEmbedder:
-    """Async embedding client using voyage-3.5-lite."""
+    """Async embedding client using Voyage AI."""
 
     MAX_BATCH = 128
 

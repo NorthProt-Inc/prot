@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,6 +10,8 @@ from fastapi import FastAPI
 from prot.audio import AudioManager
 from prot.config import settings
 from prot.pipeline import Pipeline
+
+logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
 
 pipeline: Pipeline | None = None
 audio: AudioManager | None = None

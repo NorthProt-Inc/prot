@@ -95,25 +95,30 @@ class Pipeline:
 
     async def _async_audio_chunk(self, data: bytes) -> None:
         """Process a single audio chunk: VAD check, forward to STT if needed."""
-        # Update VAD threshold from state machine
-        self._vad.threshold = self._sm.vad_threshold
+        try:
+            # Update VAD threshold from state machine
+            self._vad.threshold = self._sm.vad_threshold
 
-        is_speech = self._vad.is_speech(data)
+            is_speech = self._vad.is_speech(data)
 
-        if is_speech:
-            state = self._sm.state
-            if state in (State.IDLE, State.ACTIVE):
-                await self._handle_vad_speech()
-            elif state == State.SPEAKING:
-                self._sm.on_speech_detected()  # -> INTERRUPTED
-                await self._handle_barge_in()
+            if is_speech:
+                state = self._sm.state
+                if state in (State.IDLE, State.ACTIVE):
+                    await self._handle_vad_speech()
+                # Barge-in disabled — no echo cancellation, TTS output triggers false VAD
+                # elif state == State.SPEAKING:
+                #     self._sm.on_speech_detected()
+                #     await self._handle_barge_in()
 
-        # Forward audio to STT when listening
-        if self._sm.state == State.LISTENING:
-            await self._stt.send_audio(data)
+            # Forward audio to STT when listening
+            if self._sm.state == State.LISTENING:
+                await self._stt.send_audio(data)
+        except Exception:
+            logger.exception("Error in audio chunk processing")
 
     async def _handle_vad_speech(self) -> None:
         """VAD detected speech in IDLE/ACTIVE — transition and connect STT."""
+        logger.info("VAD speech detected — connecting STT")
         self._sm.on_speech_detected()
         self._vad.reset()
         self._current_transcript = ""
@@ -123,12 +128,14 @@ class Pipeline:
         """STT callback — store final transcript only."""
         if is_final:
             self._current_transcript += text
+            logger.info("STT final: %s", text)
 
     async def _handle_utterance_end(self) -> None:
         """STT utterance end — transition to PROCESSING and run response."""
         if not self._current_transcript.strip():
             return
 
+        logger.info("Utterance complete: %s", self._current_transcript.strip())
         self._sm.on_utterance_complete()
         await self._stt.disconnect()
 
@@ -145,6 +152,7 @@ class Pipeline:
         buffer = ""
 
         try:
+            logger.info("LLM streaming response...")
             self._sm.on_tts_started()
             await self._player.start()
 
@@ -181,6 +189,7 @@ class Pipeline:
             if self._sm.state == State.SPEAKING:
                 self._sm.on_tts_complete()
                 self._ctx.add_message("assistant", full_response)
+                logger.info("Response complete (%d chars) — state=ACTIVE", len(full_response))
                 self._start_active_timeout()
                 self._extract_memories_bg()
 

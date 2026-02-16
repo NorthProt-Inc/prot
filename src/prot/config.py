@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     vad_threshold_speaking: float = 0.8
 
     # Deepgram
-    deepgram_model: str = "flux"
+    deepgram_model: str = "nova-3"
     deepgram_language: str = "ko"
     deepgram_endpointing: int = 500
 
@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     claude_effort: str = "medium"
 
     # TTS
-    elevenlabs_model: str = "eleven_flash_v2_5"
-    elevenlabs_voice_id: str = ""
+    elevenlabs_model: str = "eleven_multilingual_v2"
+    elevenlabs_voice_id: str = "Fahco4VZzobUeiPqni1S"
     elevenlabs_output_format: str = "pcm_16000"
 
     # HASS
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Embeddings
     voyage_api_key: str = ""
-    voyage_model: str = "voyage-3.5-lite"
+    voyage_model: str = "voyage-4-lite"
     voyage_dimension: int = 1024
 
     # Memory

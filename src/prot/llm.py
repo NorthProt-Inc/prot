@@ -31,7 +31,7 @@ class LLMClient:
             model=settings.claude_model,
             max_tokens=settings.claude_max_tokens,
             thinking={"type": "adaptive"},
-            effort=settings.claude_effort,
+            output_config={"effort": settings.claude_effort},
             system=system_blocks,
             tools=tools if tools else None,
             messages=messages,

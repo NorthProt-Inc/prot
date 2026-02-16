@@ -17,13 +17,12 @@ class TTSClient:
     async def stream_audio(self, text: str) -> AsyncIterator[bytes]:
         """Stream PCM audio bytes for given text."""
         self._cancelled = False
-        response = self._client.text_to_speech.stream(
+        async for chunk in self._client.text_to_speech.stream(
             voice_id=settings.elevenlabs_voice_id,
             text=text,
             model_id=settings.elevenlabs_model,
             output_format=settings.elevenlabs_output_format,
-        )
-        async for chunk in await response:
+        ):
             if self._cancelled:
                 break
             if isinstance(chunk, bytes):

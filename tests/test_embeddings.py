@@ -18,7 +18,7 @@ class TestAsyncVoyageEmbedder:
             assert len(vectors[0]) == 1024
             mock_client.embed.assert_called_once_with(
                 texts=["hello", "world"],
-                model="voyage-3.5-lite",
+                model="voyage-4-lite",
                 input_type="document",
             )
 
@@ -34,7 +34,7 @@ class TestAsyncVoyageEmbedder:
             assert len(vector) == 1024
             mock_client.embed.assert_called_once_with(
                 texts=["search term"],
-                model="voyage-3.5-lite",
+                model="voyage-4-lite",
                 input_type="query",
             )
 

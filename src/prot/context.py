@@ -1,6 +1,7 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-KST = timezone(timedelta(hours=9))
+LOCAL_TZ = ZoneInfo("America/Vancouver")
 
 
 class ContextManager:
@@ -44,8 +45,8 @@ class ContextManager:
         block3_dynamic: dict = {
             "type": "text",
             "text": (
-                f"datetime: {datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"timezone: Asia/Seoul"
+                f"datetime: {datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"timezone: America/Vancouver"
             ),
         }
         return [block1_persona, block2_rag, block3_dynamic]
@@ -58,9 +59,9 @@ class ContextManager:
             "max_uses": 1,
             "user_location": {
                 "type": "approximate",
-                "city": "Seoul",
-                "country": "KR",
-                "timezone": "Asia/Seoul",
+                "city": "Vancouver",
+                "country": "CA",
+                "timezone": "America/Vancouver",
             },
         }
         hass_tool: dict = {

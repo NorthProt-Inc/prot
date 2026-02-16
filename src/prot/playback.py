@@ -1,4 +1,7 @@
 import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
 
 _VALID_FORMATS = {"s16le", "s16be", "u8", "float32le", "float32be"}
 _VALID_CHANNELS = {1, 2}
@@ -35,8 +38,12 @@ class AudioPlayer:
     async def play_chunk(self, data: bytes) -> None:
         """Write audio chunk to paplay stdin."""
         if self._process and self._process.stdin:
-            self._process.stdin.write(data)
-            await self._process.stdin.drain()
+            try:
+                self._process.stdin.write(data)
+                await self._process.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                logger.warning("paplay process died — stopping playback")
+                self._process = None
 
     async def finish(self) -> None:
         """Close stdin and wait for paplay to finish."""

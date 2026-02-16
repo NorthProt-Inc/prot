@@ -1,8 +1,9 @@
-"""Deepgram Flux WebSocket streaming STT client."""
+"""Deepgram Nova-3 WebSocket streaming STT client."""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -13,12 +14,15 @@ from deepgram.extensions.types.sockets.listen_v1_results_event import (
 from deepgram.extensions.types.sockets.listen_v1_utterance_end_event import (
     ListenV1UtteranceEndEvent,
 )
+from websockets.exceptions import ConnectionClosedOK
+
+logger = logging.getLogger(__name__)
 
 from prot.config import settings
 
 
 class STTClient:
-    """Deepgram Flux WebSocket streaming client."""
+    """Deepgram Nova-3 WebSocket streaming client."""
 
     def __init__(
         self,
@@ -39,27 +43,45 @@ class STTClient:
 
     async def connect(self) -> None:
         """Open WebSocket connection to Deepgram and start receiving."""
-        self._connection_ctx = self._client.listen.v1.connect(
-            model=settings.deepgram_model,
-            language=settings.deepgram_language,
-            smart_format="true",
-            interim_results="true",
-            utterance_end_ms="1000",
-            endpointing=str(settings.deepgram_endpointing),
-            keyterm=self._keyterms if self._keyterms else None,
-        )
-        self._connection = await self._connection_ctx.__aenter__()
-        self._recv_task = asyncio.create_task(self._recv_loop())
+        await self.disconnect()
+        try:
+            self._connection_ctx = self._client.listen.v1.connect(
+                model=settings.deepgram_model,
+                language=settings.deepgram_language,
+                encoding="linear16",
+                sample_rate=str(settings.sample_rate),
+                channels="1",
+                smart_format="true",
+                interim_results="true",
+                utterance_end_ms="1000",
+                endpointing=str(settings.deepgram_endpointing),
+                keyterm=self._keyterms if self._keyterms else None,
+            )
+            self._connection = await self._connection_ctx.__aenter__()
+            logger.info("STT connected (model=%s)", settings.deepgram_model)
+            self._recv_task = asyncio.create_task(self._recv_loop())
+        except Exception:
+            logger.exception("STT connect failed")
+            self._connection = None
+            self._connection_ctx = None
 
     async def send_audio(self, data: bytes) -> None:
         """Send PCM audio chunk to Deepgram."""
         if self._connection:
-            self._connection.send_media(data)
+            try:
+                await self._connection.send_media(data)
+            except Exception:
+                logger.warning("STT send failed — connection lost")
+                self._connection = None
 
     async def disconnect(self) -> None:
         """Close WebSocket connection."""
         if self._recv_task:
             self._recv_task.cancel()
+            try:
+                await self._recv_task
+            except (asyncio.CancelledError, Exception):
+                pass
             self._recv_task = None
         if self._connection_ctx:
             await self._connection_ctx.__aexit__(None, None, None)
@@ -68,10 +90,15 @@ class STTClient:
 
     async def _recv_loop(self) -> None:
         """Receive and dispatch messages from Deepgram."""
-        while self._connection:
+        conn = self._connection
+        while conn:
             try:
-                result = await self._connection.recv()
+                result = await conn.recv()
+            except ConnectionClosedOK:
+                logger.debug("STT websocket closed normally")
+                break
             except Exception:
+                logger.exception("STT recv error")
                 break
             if isinstance(result, ListenV1ResultsEvent):
                 await self._on_message(result)
