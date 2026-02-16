@@ -41,3 +41,60 @@ class TestLLMClient:
         client = LLMClient(api_key="test")
         client.cancel()
         assert client._cancelled is True
+
+    async def test_execute_tool_unknown_returns_error(self):
+        client = LLMClient(api_key="test")
+        result = await client.execute_tool("unknown_tool", {})
+        assert "error" in result
+        assert "unknown_tool" in result["error"].lower()
+
+    async def test_execute_hass_invalid_entity_id_returns_error(self):
+        client = LLMClient(api_key="test")
+        result = await client.execute_tool(
+            "home_assistant", {"action": "get_state", "entity_id": "../../bad"}
+        )
+        assert "error" in result
+        assert "Invalid entity_id" in result["error"]
+
+    async def test_execute_hass_missing_entity_id_returns_error(self):
+        client = LLMClient(api_key="test")
+        result = await client.execute_tool(
+            "home_assistant", {"action": "get_state"}
+        )
+        assert "error" in result
+
+    async def test_execute_hass_get_state_success(self):
+        client = LLMClient(api_key="test")
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"state": "on"}
+
+        with patch("prot.llm.httpx.AsyncClient") as mock_http_cls:
+            mock_http = AsyncMock()
+            mock_http_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_http.get = AsyncMock(return_value=mock_response)
+
+            result = await client.execute_tool(
+                "home_assistant",
+                {"action": "get_state", "entity_id": "light.living_room"},
+            )
+            assert result == {"state": "on"}
+
+    async def test_execute_hass_http_error_returns_error(self):
+        client = LLMClient(api_key="test")
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+
+        with patch("prot.llm.httpx.AsyncClient") as mock_http_cls:
+            mock_http = AsyncMock()
+            mock_http_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+            mock_http_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_http.get = AsyncMock(return_value=mock_response)
+
+            result = await client.execute_tool(
+                "home_assistant",
+                {"action": "get_state", "entity_id": "light.living_room"},
+            )
+            assert "error" in result
+            assert "401" in result["error"]
