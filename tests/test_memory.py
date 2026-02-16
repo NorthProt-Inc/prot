@@ -100,6 +100,39 @@ class TestMemoryExtractor:
         mock_store.upsert_entity.assert_not_called()
         mock_embedder.embed_texts.assert_not_called()
 
+    async def test_extract_from_conversation_handles_malformed_json(self):
+        """Verify graceful fallback when LLM returns non-JSON."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="Sorry, I cannot extract entities")]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic):
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            result = await extractor.extract_from_conversation([
+                {"role": "user", "content": "Hello"},
+            ])
+            assert result == {"entities": [], "relationships": []}
+
+    async def test_extract_from_conversation_handles_markdown_fenced_json(self):
+        """Verify markdown code fencing is stripped before parsing."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='```json\n{"entities": [{"name": "X", "type": "person", "description": "test"}], "relationships": []}\n```')]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic):
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            result = await extractor.extract_from_conversation([
+                {"role": "user", "content": "I know X"},
+            ])
+            assert len(result["entities"]) == 1
+            assert result["entities"][0]["name"] == "X"
+
     async def test_pre_load_context_no_results(self):
         """Verify returns '(no memory context)' when no communities found."""
         mock_store = AsyncMock()

@@ -45,7 +45,17 @@ class MemoryExtractor:
             system=EXTRACTION_PROMPT,
             messages=[{"role": "user", "content": conversation_text}],
         )
-        return json.loads(response.content[0].text)
+        try:
+            raw = response.content[0].text
+        except (IndexError, AttributeError):
+            return {"entities": [], "relationships": []}
+        # Strip markdown fencing if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {"entities": [], "relationships": []}
 
     async def save_extraction(self, extraction: dict) -> None:
         """Embed and save extracted entities and relationships."""

@@ -16,6 +16,8 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 async def init_pool(dsn: str | None = None) -> asyncpg.Pool:
     """Create asyncpg connection pool."""
     global _pool
+    if _pool is not None:
+        raise RuntimeError("Pool already initialized. Call close_pool() first.")
     _pool = await asyncpg.create_pool(
         dsn=dsn or settings.database_url,
         min_size=settings.db_pool_min,

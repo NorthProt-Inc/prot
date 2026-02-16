@@ -43,16 +43,12 @@ def mock_record(**kwargs):
 class TestUpsertEntity:
     """upsert_entity should insert new or update existing entities."""
 
-    async def test_upsert_entity_inserts_new(self) -> None:
+    async def test_upsert_entity_uses_on_conflict(self) -> None:
         pool, conn = make_mock_pool()
         store = GraphRAGStore(pool)
 
         new_id = uuid4()
-        # First fetchrow returns None (entity does not exist)
-        # Second fetchrow returns a row with the new UUID (INSERT RETURNING)
-        conn.fetchrow = AsyncMock(
-            side_effect=[None, mock_record(id=new_id)]
-        )
+        conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
 
         result = await store.upsert_entity(
             name="TestEntity",
@@ -64,40 +60,12 @@ class TestUpsertEntity:
 
         assert result == new_id
 
-        # Verify SELECT was called first (checking existence)
-        first_call = conn.fetchrow.call_args_list[0]
-        assert "SELECT" in first_call.args[0]
-        assert "entities" in first_call.args[0]
-
-        # Verify INSERT was called (not UPDATE)
-        second_call = conn.fetchrow.call_args_list[1]
-        assert "INSERT" in second_call.args[0]
-        assert "entities" in second_call.args[0]
-
-    async def test_upsert_entity_updates_existing(self) -> None:
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        existing_id = uuid4()
-        existing_row = mock_record(id=existing_id, mention_count=3)
-
-        # fetchrow returns an existing record
-        conn.fetchrow = AsyncMock(return_value=existing_row)
-
-        result = await store.upsert_entity(
-            name="TestEntity",
-            entity_type="person",
-            description="Updated description",
-            embedding=[0.4, 0.5, 0.6],
-        )
-
-        assert result == existing_id
-
-        # Verify UPDATE was called with mention_count increment pattern
-        conn.execute.assert_awaited_once()
-        update_call = conn.execute.call_args
-        assert "UPDATE" in update_call.args[0]
-        assert "mention_count + 1" in update_call.args[0]
+        # Verify single INSERT ... ON CONFLICT query
+        call = conn.fetchrow.call_args
+        assert "INSERT" in call.args[0]
+        assert "ON CONFLICT" in call.args[0]
+        assert "mention_count" in call.args[0]
+        assert conn.fetchrow.await_count == 1
 
 
 class TestGetEntityByName:
@@ -159,9 +127,10 @@ class TestUpsertRelationship:
 
         assert result == rel_id
 
-        # Verify INSERT was called on relationships table
+        # Verify INSERT ... ON CONFLICT was called on relationships table
         call = conn.fetchrow.call_args
         assert "INSERT" in call.args[0]
+        assert "ON CONFLICT" in call.args[0]
         assert "relationships" in call.args[0]
 
 

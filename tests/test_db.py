@@ -61,6 +61,11 @@ class TestInitPool:
         assert result is mock_pool
         assert db_module._pool is mock_pool
 
+    async def test_init_pool_raises_when_already_initialized(self) -> None:
+        db_module._pool = MagicMock()
+        with pytest.raises(RuntimeError, match="Pool already initialized"):
+            await init_pool(dsn="postgresql://test:test@localhost/test")
+
     async def test_init_pool_uses_settings_dsn_when_none(self) -> None:
         mock_pool = MagicMock()
         mock_create = AsyncMock(return_value=mock_pool)

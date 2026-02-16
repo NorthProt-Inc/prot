@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS entities (
     name_embedding vector(1024),
     mention_count INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (namespace, name)
 );
 
 CREATE TABLE IF NOT EXISTS relationships (
@@ -20,10 +21,11 @@ CREATE TABLE IF NOT EXISTS relationships (
     target_id UUID NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
     relation_type TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    weight FLOAT NOT NULL DEFAULT 1.0,
+    weight DOUBLE PRECISION NOT NULL DEFAULT 1.0,
     attributes JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (source_id, target_id, relation_type)
 );
 
 CREATE TABLE IF NOT EXISTS communities (

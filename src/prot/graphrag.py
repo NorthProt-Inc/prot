@@ -23,33 +23,22 @@ class GraphRAGStore:
     ) -> UUID:
         """Insert or update entity. Increments mention_count on conflict."""
         async with self._pool.acquire() as conn:
-            existing = await conn.fetchrow(
-                "SELECT id, mention_count FROM entities WHERE namespace = $1 AND name = $2",
+            row = await conn.fetchrow(
+                """INSERT INTO entities (namespace, name, entity_type, description, name_embedding)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (namespace, name)
+                DO UPDATE SET description = EXCLUDED.description,
+                             mention_count = entities.mention_count + 1,
+                             name_embedding = COALESCE(EXCLUDED.name_embedding, entities.name_embedding),
+                             updated_at = now()
+                RETURNING id""",
                 namespace,
                 name,
+                entity_type,
+                description,
+                embedding,
             )
-            if existing:
-                await conn.execute(
-                    """UPDATE entities
-                    SET description = $1, mention_count = mention_count + 1,
-                        name_embedding = COALESCE($2, name_embedding), updated_at = now()
-                    WHERE id = $3""",
-                    description,
-                    embedding,
-                    existing["id"],
-                )
-                return existing["id"]
-            else:
-                row = await conn.fetchrow(
-                    """INSERT INTO entities (namespace, name, entity_type, description, name_embedding)
-                    VALUES ($1, $2, $3, $4, $5) RETURNING id""",
-                    namespace,
-                    name,
-                    entity_type,
-                    description,
-                    embedding,
-                )
-                return row["id"]
+            return row["id"]
 
     async def get_entity_by_name(
         self, name: str, namespace: str = "default"
@@ -71,11 +60,16 @@ class GraphRAGStore:
         description: str,
         weight: float = 1.0,
     ) -> UUID:
-        """Insert a relationship between two entities."""
+        """Insert or update a relationship between two entities."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 """INSERT INTO relationships (source_id, target_id, relation_type, description, weight)
-                VALUES ($1, $2, $3, $4, $5) RETURNING id""",
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (source_id, target_id, relation_type)
+                DO UPDATE SET description = EXCLUDED.description,
+                             weight = EXCLUDED.weight,
+                             updated_at = now()
+                RETURNING id""",
                 source_id,
                 target_id,
                 relation_type,
