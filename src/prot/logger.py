@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-KST = timezone(timedelta(hours=9))
+LOCAL_TZ = ZoneInfo("America/Vancouver")
 
 
 class ConversationLogger:
-    """Append conversation entries to a daily JSONL file (KST-based).
+    """Append conversation entries to a daily JSONL file (local-TZ-based).
 
     Each line is a self-contained JSON object — O(1) writes with no
     need to read or parse the existing file.
@@ -21,11 +22,11 @@ class ConversationLogger:
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
     def _today_file(self) -> Path:
-        return self._log_dir / f"{datetime.now(KST).strftime('%Y-%m-%d')}.jsonl"
+        return self._log_dir / f"{datetime.now(LOCAL_TZ).strftime('%Y-%m-%d')}.jsonl"
 
     def log(self, role: str, content: str) -> None:
         entry = {
-            "timestamp": datetime.now(KST).isoformat(),
+            "timestamp": datetime.now(LOCAL_TZ).isoformat(),
             "role": role,
             "content": content,
         }

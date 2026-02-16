@@ -4,6 +4,9 @@ import httpx
 from anthropic import AsyncAnthropic
 
 from prot.config import settings
+from prot.log import get_logger
+
+logger = get_logger(__name__)
 
 _ENTITY_ID_PATTERN = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 _HASS_TIMEOUT = httpx.Timeout(10.0)
@@ -26,6 +29,7 @@ class LLMClient:
         system_blocks order: [persona (cached), rag (cached), dynamic (NOT cached)]
         """
         self._cancelled = False
+        logger.info("Streaming", model=settings.claude_model)
 
         async with self._client.messages.stream(
             model=settings.claude_model,
@@ -52,6 +56,7 @@ class LLMClient:
 
     async def execute_tool(self, tool_name: str, tool_input: dict) -> dict:
         """Execute a tool call from Claude. Returns tool result."""
+        logger.info("Tool call", tool=tool_name)
         if tool_name == "home_assistant":
             return await self._execute_hass(tool_input)
         return {"error": f"Unknown tool: {tool_name}"}
@@ -60,6 +65,7 @@ class LLMClient:
         """Execute Home Assistant API call."""
         action = tool_input.get("action")
         entity_id = tool_input.get("entity_id", "")
+        logger.info("HASS", action=action, entity=entity_id)
 
         if not _ENTITY_ID_PATTERN.match(entity_id):
             return {"error": f"Invalid entity_id: {entity_id}"}

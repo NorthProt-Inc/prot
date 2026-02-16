@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 
 from prot.config import settings
 from prot.context import ContextManager
@@ -15,8 +14,9 @@ from prot.state import State, StateMachine
 from prot.stt import STTClient
 from prot.tts import TTSClient
 from prot.vad import VADProcessor
+from prot.log import get_logger, start_turn, reset_turn
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Pipeline:
@@ -118,7 +118,8 @@ class Pipeline:
 
     async def _handle_vad_speech(self) -> None:
         """VAD detected speech in IDLE/ACTIVE — transition and connect STT."""
-        logger.info("VAD speech detected — connecting STT")
+        start_turn()
+        logger.info("VAD speech", state=self._sm.state.value)
         self._sm.on_speech_detected()
         self._vad.reset()
         self._current_transcript = ""
@@ -128,14 +129,14 @@ class Pipeline:
         """STT callback — store final transcript only."""
         if is_final:
             self._current_transcript += text
-            logger.info("STT final: %s", text)
+            logger.info("STT final", text=text[:50])
 
     async def _handle_utterance_end(self) -> None:
         """STT utterance end — transition to PROCESSING and run response."""
         if not self._current_transcript.strip():
             return
 
-        logger.info("Utterance complete: %s", self._current_transcript.strip())
+        logger.info("Utterance done", len=len(self._current_transcript.strip()))
         self._sm.on_utterance_complete()
         await self._stt.disconnect()
 
@@ -152,7 +153,7 @@ class Pipeline:
         buffer = ""
 
         try:
-            logger.info("LLM streaming response...")
+            logger.info("LLM streaming", model=settings.claude_model)
             self._sm.on_tts_started()
             await self._player.start()
 
@@ -189,7 +190,8 @@ class Pipeline:
             if self._sm.state == State.SPEAKING:
                 self._sm.on_tts_complete()
                 self._ctx.add_message("assistant", full_response)
-                logger.info("Response complete (%d chars) — state=ACTIVE", len(full_response))
+                logger.info("Response done", chars=len(full_response))
+                reset_turn()
                 self._start_active_timeout()
                 self._extract_memories_bg()
 

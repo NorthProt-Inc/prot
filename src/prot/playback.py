@@ -1,7 +1,8 @@
 import asyncio
-import logging
 
-logger = logging.getLogger(__name__)
+from prot.log import get_logger
+
+logger = get_logger(__name__)
 
 _VALID_FORMATS = {"s16le", "s16be", "u8", "float32le", "float32be"}
 _VALID_CHANNELS = {1, 2}
@@ -26,6 +27,7 @@ class AudioPlayer:
 
     async def start(self) -> None:
         """Start paplay subprocess."""
+        logger.debug("Player started", rate=self._rate)
         self._process = await asyncio.create_subprocess_exec(
             "paplay",
             f"--format={self._format}",
@@ -42,7 +44,7 @@ class AudioPlayer:
                 self._process.stdin.write(data)
                 await self._process.stdin.drain()
             except (BrokenPipeError, ConnectionResetError):
-                logger.warning("paplay process died — stopping playback")
+                logger.warning("paplay died")
                 self._process = None
 
     async def finish(self) -> None:

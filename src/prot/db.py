@@ -7,6 +7,9 @@ from pathlib import Path
 import asyncpg
 
 from prot.config import settings
+from prot.log import get_logger
+
+logger = get_logger(__name__)
 
 _pool: asyncpg.Pool | None = None
 
@@ -23,6 +26,7 @@ async def init_pool(dsn: str | None = None) -> asyncpg.Pool:
         min_size=settings.db_pool_min,
         max_size=settings.db_pool_max,
     )
+    logger.info("Pool created", min=settings.db_pool_min, max=settings.db_pool_max)
     return _pool
 
 

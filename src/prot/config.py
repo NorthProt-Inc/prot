@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     rag_context_target_tokens: int = 3000
     rag_top_k: int = 10
 
+    # Logging
+    log_level: str = "INFO"
+
     # Timers
     active_timeout: int = 30  # seconds before WS disconnect
 

@@ -9,6 +9,9 @@ from anthropic import AsyncAnthropic
 from prot.config import settings
 from prot.embeddings import AsyncVoyageEmbedder
 from prot.graphrag import GraphRAGStore
+from prot.log import get_logger
+
+logger = get_logger(__name__)
 
 EXTRACTION_PROMPT = """Extract entities and relationships from this conversation.
 
@@ -36,6 +39,7 @@ class MemoryExtractor:
 
     async def extract_from_conversation(self, messages: list[dict]) -> dict:
         """Use Haiku 4.5 to extract entities and relationships from conversation."""
+        logger.info("Extracting", messages=len(messages))
         conversation_text = "\n".join(
             f"{m['role']}: {m['content']}" for m in messages
         )
@@ -64,6 +68,8 @@ class MemoryExtractor:
 
         if not entities:
             return
+
+        logger.info("Saved", entities=len(entities), rels=len(relationships))
 
         descriptions = [e["description"] for e in entities]
         embeddings = await self._embedder.embed_texts(descriptions)

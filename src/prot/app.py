@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from prot.audio import AudioManager
 from prot.config import settings
+from prot.log import get_logger, setup_logging
 from prot.pipeline import Pipeline
 
-logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
+setup_logging()
+logger = get_logger(__name__)
 
 pipeline: Pipeline | None = None
 audio: AudioManager | None = None
@@ -29,11 +30,11 @@ async def lifespan(app: FastAPI):
         on_audio=pipeline.on_audio_chunk,
     )
     audio.start()
-    print(f"prot started. Mic device={settings.mic_device_index}. Listening...")
+    logger.info("prot started", mic=settings.mic_device_index)
     yield
     audio.stop()
     await pipeline.shutdown()
-    print("prot stopped.")
+    logger.info("prot stopped")
 
 
 app = FastAPI(lifespan=lifespan)

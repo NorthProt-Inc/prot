@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -16,9 +15,10 @@ from deepgram.extensions.types.sockets.listen_v1_utterance_end_event import (
 )
 from websockets.exceptions import ConnectionClosedOK
 
-logger = logging.getLogger(__name__)
-
 from prot.config import settings
+from prot.log import get_logger
+
+logger = get_logger(__name__)
 
 
 class STTClient:
@@ -58,7 +58,7 @@ class STTClient:
                 keyterm=self._keyterms if self._keyterms else None,
             )
             self._connection = await self._connection_ctx.__aenter__()
-            logger.info("STT connected (model=%s)", settings.deepgram_model)
+            logger.info("Connected", model=settings.deepgram_model, lang=settings.deepgram_language)
             self._recv_task = asyncio.create_task(self._recv_loop())
         except Exception:
             logger.exception("STT connect failed")
@@ -71,7 +71,7 @@ class STTClient:
             try:
                 await self._connection.send_media(data)
             except Exception:
-                logger.warning("STT send failed — connection lost")
+                logger.warning("Send failed")
                 self._connection = None
 
     async def disconnect(self) -> None:

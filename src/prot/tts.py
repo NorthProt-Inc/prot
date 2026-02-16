@@ -3,6 +3,9 @@ from collections.abc import AsyncIterator
 from elevenlabs import AsyncElevenLabs
 
 from prot.config import settings
+from prot.log import get_logger
+
+logger = get_logger(__name__)
 
 
 class TTSClient:
@@ -17,6 +20,7 @@ class TTSClient:
     async def stream_audio(self, text: str) -> AsyncIterator[bytes]:
         """Stream PCM audio bytes for given text."""
         self._cancelled = False
+        logger.info("Audio stream", text=text[:30], model=settings.elevenlabs_model)
         async for chunk in self._client.text_to_speech.stream(
             voice_id=settings.elevenlabs_voice_id,
             text=text,
