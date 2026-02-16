@@ -79,6 +79,25 @@ class TestStateMachine:
         sm.on_tts_started()
         assert sm.vad_threshold == 0.8
 
+    def test_try_on_tts_complete_from_speaking(self):
+        sm = StateMachine()
+        sm.on_speech_detected()
+        sm.on_utterance_complete()
+        sm.on_tts_started()
+        assert sm.state == State.SPEAKING
+        assert sm.try_on_tts_complete() is True
+        assert sm.state == State.ACTIVE
+
+    def test_try_on_tts_complete_from_interrupted(self):
+        sm = StateMachine()
+        sm.on_speech_detected()
+        sm.on_utterance_complete()
+        sm.on_tts_started()
+        sm.on_speech_detected()  # barge-in -> INTERRUPTED
+        assert sm.state == State.INTERRUPTED
+        assert sm.try_on_tts_complete() is False
+        assert sm.state == State.INTERRUPTED
+
     def test_invalid_transition_raises(self):
         sm = StateMachine()
         with pytest.raises(ValueError):

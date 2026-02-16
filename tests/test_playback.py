@@ -45,6 +45,26 @@ class TestAudioPlayer:
             mock_proc.wait.assert_called_once()
             assert player._process is None
 
+    async def test_start_kills_existing_process(self):
+        old_proc = AsyncMock()
+        old_proc.returncode = None
+        old_proc.kill = MagicMock()
+        old_proc.wait = AsyncMock()
+
+        new_proc = AsyncMock()
+        new_proc.stdin = AsyncMock()
+
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=[old_proc, new_proc]
+        ):
+            player = AudioPlayer()
+            await player.start()  # spawns old_proc
+            await player.start()  # should kill old_proc, then spawn new_proc
+
+        old_proc.kill.assert_called_once()
+        old_proc.wait.assert_awaited_once()
+        assert player._process is new_proc
+
     def test_invalid_format_raises(self):
         with pytest.raises(ValueError, match="Invalid format"):
             AudioPlayer(format="invalid")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from prot.config import settings
 from prot.context import ContextManager
@@ -46,6 +47,10 @@ class Pipeline:
         self._current_transcript: str = ""
         self._active_timeout_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._barge_in_count: int = 0
+        self._barge_in_frames: int = 6  # ~192ms sustained speech to trigger barge-in
+        self._speaking_since: float = 0.0  # monotonic time when SPEAKING entered
+        self._barge_in_grace: float = 1.5  # seconds to ignore VAD after SPEAKING starts
 
     @property
     def state(self) -> StateMachine:
@@ -104,11 +109,21 @@ class Pipeline:
             if is_speech:
                 state = self._sm.state
                 if state in (State.IDLE, State.ACTIVE):
+                    self._barge_in_count = 0
                     await self._handle_vad_speech()
-                # Barge-in disabled — no echo cancellation, TTS output triggers false VAD
-                # elif state == State.SPEAKING:
-                #     self._sm.on_speech_detected()
-                #     await self._handle_barge_in()
+                elif state == State.SPEAKING:
+                    elapsed = time.monotonic() - self._speaking_since
+                    if elapsed < self._barge_in_grace:
+                        pass  # grace period — ignore VAD right after SPEAKING starts
+                    else:
+                        self._barge_in_count += 1
+                        if self._barge_in_count >= self._barge_in_frames:
+                            logger.info("Barge-in", frames=self._barge_in_count)
+                            self._barge_in_count = 0
+                            self._sm.on_speech_detected()
+                            await self._handle_barge_in()
+            else:
+                self._barge_in_count = 0
 
             # Forward audio to STT when listening
             if self._sm.state == State.LISTENING:
@@ -128,6 +143,8 @@ class Pipeline:
     async def _on_transcript(self, text: str, is_final: bool) -> None:
         """STT callback — store final transcript only."""
         if is_final:
+            if self._current_transcript:
+                self._current_transcript += " "
             self._current_transcript += text
             logger.info("STT final", text=text[:50])
 
@@ -144,51 +161,77 @@ class Pipeline:
         await self._process_response()
 
     async def _process_response(self) -> None:
-        """Stream LLM -> TTS -> playback with sentence chunking."""
+        """Stream LLM -> TTS -> playback with producer-consumer pipeline."""
         system_blocks = self._ctx.build_system_blocks()
         tools = self._ctx.build_tools()
         messages = self._ctx.get_messages()
 
         full_response = ""
         buffer = ""
+        audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
+
+        async def _produce() -> None:
+            nonlocal full_response, buffer
+            try:
+                async for chunk in self._llm.stream_response(
+                    system_blocks, tools, messages
+                ):
+                    if self._sm.state == State.INTERRUPTED:
+                        break
+                    full_response += chunk
+                    buffer += chunk
+                    sentences, buffer = chunk_sentences(buffer)
+                    for sentence in sentences:
+                        clean = sanitize_for_tts(sentence)
+                        if not clean:
+                            continue
+                        async for audio in self._tts.stream_audio(clean):
+                            if self._sm.state == State.INTERRUPTED:
+                                return
+                            await audio_q.put(audio)
+                # Flush remaining
+                if buffer.strip() and self._sm.state != State.INTERRUPTED:
+                    clean = sanitize_for_tts(buffer)
+                    if clean:
+                        async for audio in self._tts.stream_audio(clean):
+                            if self._sm.state == State.INTERRUPTED:
+                                return
+                            await audio_q.put(audio)
+            finally:
+                await audio_q.put(None)  # sentinel
+
+        async def _consume() -> None:
+            first_chunk = True
+            while True:
+                data = await audio_q.get()
+                if data is None:
+                    break
+                if self._sm.state == State.INTERRUPTED:
+                    break
+                if first_chunk:
+                    self._speaking_since = time.monotonic()
+                    first_chunk = False
+                await self._player.play_chunk(data)
 
         try:
             logger.info("LLM streaming", model=settings.claude_model)
             self._sm.on_tts_started()
             await self._player.start()
 
-            async for chunk in self._llm.stream_response(
-                system_blocks, tools, messages
-            ):
-                if self._sm.state == State.INTERRUPTED:
-                    break
-                full_response += chunk
-                buffer += chunk
-
-                sentences, buffer = chunk_sentences(buffer)
-                for sentence in sentences:
-                    clean = sanitize_for_tts(sentence)
-                    if not clean:
-                        continue
-                    async for audio_data in self._tts.stream_audio(clean):
-                        if self._sm.state == State.INTERRUPTED:
-                            break
-                        await self._player.play_chunk(audio_data)
-
-            # Flush remaining buffer
-            if buffer.strip() and self._sm.state != State.INTERRUPTED:
-                clean = sanitize_for_tts(buffer)
-                if clean:
-                    async for audio_data in self._tts.stream_audio(clean):
-                        if self._sm.state == State.INTERRUPTED:
-                            break
-                        await self._player.play_chunk(audio_data)
+            prod = asyncio.create_task(_produce())
+            cons = asyncio.create_task(_consume())
+            done, pending = await asyncio.wait(
+                [prod, cons], return_when=asyncio.FIRST_EXCEPTION,
+            )
+            for t in pending:
+                t.cancel()
+            for t in done:
+                t.result()  # re-raise exceptions
 
             if self._sm.state != State.INTERRUPTED:
                 await self._player.finish()
 
-            if self._sm.state == State.SPEAKING:
-                self._sm.on_tts_complete()
+            if self._sm.try_on_tts_complete():
                 self._ctx.add_message("assistant", full_response)
                 logger.info("Response done", chars=len(full_response))
                 reset_turn()
@@ -204,11 +247,13 @@ class Pipeline:
 
     async def _handle_barge_in(self) -> None:
         """User interrupted during TTS — cancel everything, reconnect STT."""
+        logger.info("Interrupting", state=self._sm.state.value)
         self._llm.cancel()
         self._tts.flush()
         await self._player.kill()
         self._sm.on_interrupt_handled()
         self._vad.reset()
+        start_turn()
         self._current_transcript = ""
         await self._stt.connect()
 

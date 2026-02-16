@@ -61,8 +61,12 @@ class TestSTTClient:
         with patch("prot.stt.AsyncDeepgramClient"):
             client = STTClient(api_key="test", on_transcript=on_transcript)
 
+        mock_word = MagicMock()
+        mock_word.punctuated_word = "안녕하세요"
+        mock_word.word = "안녕하세요"
+        mock_alt = MagicMock(transcript="안녕하세요", words=[mock_word])
         mock_result = MagicMock()
-        mock_result.channel.alternatives = [MagicMock(transcript="안녕하세요")]
+        mock_result.channel.alternatives = [mock_alt]
         mock_result.is_final = True
 
         await client._on_message(mock_result)
@@ -108,6 +112,17 @@ class TestSTTClient:
         with patch("prot.stt.AsyncDeepgramClient"):
             client = STTClient(api_key="test")
         await client.send_audio(b"\x00" * 512)
+
+    async def test_send_audio_disconnect_on_failure(self):
+        with patch("prot.stt.AsyncDeepgramClient"):
+            client = STTClient(api_key="test")
+        mock_conn = MagicMock()
+        mock_conn.send_media = AsyncMock(side_effect=RuntimeError("boom"))
+        client._connection = mock_conn
+        client.disconnect = AsyncMock()
+
+        await client.send_audio(b"\x00" * 512)
+        client.disconnect.assert_awaited_once()
 
     async def test_disconnect_cancels_recv_task(self):
         with patch("prot.stt.AsyncDeepgramClient"):

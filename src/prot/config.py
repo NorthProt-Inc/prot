@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     deepgram_model: str = "nova-3"
     deepgram_language: str = "ko"
     deepgram_endpointing: int = 500
+    deepgram_utterance_end_ms: int = 2000
 
     # LLM
     claude_model: str = "claude-opus-4-6"

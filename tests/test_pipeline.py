@@ -66,6 +66,10 @@ def _make_pipeline():
     p._current_transcript = ""
     p._active_timeout_task: asyncio.Task | None = None
     p._loop = asyncio.get_running_loop()
+    p._barge_in_count = 0
+    p._barge_in_frames = 6
+    p._speaking_since = 0.0
+    p._barge_in_grace = 1.5
 
     return p
 
@@ -326,3 +330,67 @@ class TestActiveTimeout:
             await asyncio.sleep(0.05)
 
         assert p._sm.state == State.IDLE
+
+
+class TestProcessResponse:
+    """_process_response() — producer-consumer pipeline tests."""
+
+    async def test_process_response_plays_audio(self):
+        p = _make_pipeline()
+        p._sm.on_speech_detected()     # IDLE -> LISTENING
+        p._sm.on_utterance_complete()  # -> PROCESSING
+
+        # LLM yields one chunk that forms a complete sentence
+        async def fake_stream(*a, **kw):
+            yield "Hello world."
+
+        p._llm.stream_response = fake_stream
+
+        # TTS yields audio bytes
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as mock_settings:
+            mock_settings.claude_model = "test"
+            mock_settings.active_timeout = 999
+            await p._process_response()
+
+        p._player.start.assert_awaited_once()
+        p._player.play_chunk.assert_awaited()
+        assert p._sm.state == State.ACTIVE
+
+    async def test_process_response_interruption_stops_playback(self):
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        # LLM yields chunks; mid-stream we set state to INTERRUPTED
+        call_count = 0
+
+        async def fake_stream(*a, **kw):
+            nonlocal call_count
+            for word in ["Hello ", "world. ", "More ", "text."]:
+                call_count += 1
+                if call_count == 2:
+                    # Simulate barge-in: SPEAKING -> INTERRUPTED
+                    p._sm.on_speech_detected()
+                yield word
+
+        p._llm.stream_response = fake_stream
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as mock_settings:
+            mock_settings.claude_model = "test"
+            mock_settings.active_timeout = 999
+            await p._process_response()
+
+        # Should NOT have transitioned to ACTIVE (was interrupted)
+        assert p._sm.state != State.ACTIVE
+        # finish() should not be called when interrupted
+        p._player.finish.assert_not_awaited()

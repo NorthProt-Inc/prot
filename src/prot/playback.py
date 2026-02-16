@@ -26,7 +26,15 @@ class AudioPlayer:
         self._process: asyncio.subprocess.Process | None = None
 
     async def start(self) -> None:
-        """Start paplay subprocess."""
+        """Start paplay subprocess, killing any previous one first."""
+        if self._process is not None:
+            try:
+                if self._process.returncode is None:
+                    self._process.kill()
+                    await self._process.wait()
+            except ProcessLookupError:
+                pass
+            self._process = None
         logger.debug("Player started", rate=self._rate)
         self._process = await asyncio.create_subprocess_exec(
             "paplay",
@@ -45,6 +53,12 @@ class AudioPlayer:
                 await self._process.stdin.drain()
             except (BrokenPipeError, ConnectionResetError):
                 logger.warning("paplay died")
+                try:
+                    if self._process.returncode is None:
+                        self._process.kill()
+                        await self._process.wait()
+                except ProcessLookupError:
+                    pass
                 self._process = None
 
     async def finish(self) -> None:

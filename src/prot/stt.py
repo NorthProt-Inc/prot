@@ -53,7 +53,7 @@ class STTClient:
                 channels="1",
                 smart_format="true",
                 interim_results="true",
-                utterance_end_ms="1000",
+                utterance_end_ms=str(settings.deepgram_utterance_end_ms),
                 endpointing=str(settings.deepgram_endpointing),
                 keyterm=self._keyterms if self._keyterms else None,
             )
@@ -71,8 +71,12 @@ class STTClient:
             try:
                 await self._connection.send_media(data)
             except Exception:
-                logger.warning("Send failed")
-                self._connection = None
+                logger.warning("Send failed, disconnecting")
+                try:
+                    await self.disconnect()
+                except Exception:
+                    self._connection = None
+                    self._connection_ctx = None
 
     async def disconnect(self) -> None:
         """Close WebSocket connection."""
@@ -107,9 +111,23 @@ class STTClient:
 
     async def _on_message(self, result: ListenV1ResultsEvent) -> None:
         """Handle a transcript result event."""
-        transcript = result.channel.alternatives[0].transcript
-        if not transcript:
+        alt = result.channel.alternatives[0]
+        if not alt.transcript:
             return
+        # Reconstruct from words array for proper Korean spacing
+        if alt.words:
+            transcript = " ".join(
+                w.punctuated_word or w.word for w in alt.words
+            )
+            transcript = " ".join(transcript.split())  # normalize spaces
+            logger.debug(
+                "STT words",
+                raw=alt.transcript[:80],
+                reconstructed=transcript[:80],
+                n=len(alt.words),
+            )
+        else:
+            transcript = alt.transcript
         is_final = result.is_final
         await self._handle_transcript(transcript, is_final)
 

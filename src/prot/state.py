@@ -62,6 +62,13 @@ class StateMachine:
     def on_tts_complete(self) -> None:
         self._transition(State.ACTIVE)
 
+    def try_on_tts_complete(self) -> bool:
+        """SPEAKING -> ACTIVE, returns False if state changed (e.g., interrupted)."""
+        if self._state == State.SPEAKING:
+            self._state = State.ACTIVE
+            return True
+        return False
+
     def on_active_timeout(self) -> None:
         self._transition(State.IDLE)
 
