@@ -29,3 +29,30 @@ class TestAudioPlayer:
             await player.start()
             await player.kill()
             mock_proc.kill.assert_called_once()
+
+    async def test_finish_closes_stdin_and_waits(self):
+        mock_proc = AsyncMock()
+        mock_proc.stdin = AsyncMock()
+        mock_proc.stdin.close = MagicMock()
+        mock_proc.wait = AsyncMock()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+            player = AudioPlayer()
+            await player.start()
+            await player.finish()
+
+            mock_proc.stdin.close.assert_called_once()
+            mock_proc.wait.assert_called_once()
+            assert player._process is None
+
+    def test_invalid_format_raises(self):
+        with pytest.raises(ValueError, match="Invalid format"):
+            AudioPlayer(format="invalid")
+
+    def test_invalid_channels_raises(self):
+        with pytest.raises(ValueError, match="Invalid channels"):
+            AudioPlayer(channels=99)
+
+    def test_invalid_rate_raises(self):
+        with pytest.raises(ValueError, match="Invalid rate"):
+            AudioPlayer(rate=0)
