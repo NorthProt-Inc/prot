@@ -1,0 +1,109 @@
+import numpy as np
+import pytest
+from unittest.mock import patch, MagicMock
+
+
+class TestVADProcessor:
+    @pytest.fixture(autouse=True)
+    def _mock_torch_hub(self):
+        """Mock torch.hub.load to avoid downloading the actual model."""
+        mock_model = MagicMock()
+        mock_model.return_value = MagicMock(
+            item=MagicMock(return_value=0.1)
+        )  # low probability = no speech
+        with patch("prot.vad.torch.hub.load", return_value=(mock_model, None)):
+            self._mock_model = mock_model
+            yield
+
+    def test_silence_returns_false(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor()
+        silence = np.zeros(512, dtype=np.int16)
+        assert vad.is_speech(silence.tobytes()) is False
+
+    def test_threshold_property(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor(threshold=0.5)
+        assert vad.threshold == 0.5
+        vad.threshold = 0.8
+        assert vad.threshold == 0.8
+
+    def test_reset_clears_state(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor()
+        vad._speech_count = 5
+        vad.reset()
+        assert vad._speech_count == 0
+
+    def test_reset_calls_model_reset_states(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor()
+        vad.reset()
+        self._mock_model.reset_states.assert_called_once()
+
+    def test_speech_detected_after_threshold_count(self):
+        """Test that speech is detected after speech_count_threshold consecutive detections."""
+        from prot.vad import VADProcessor
+
+        # Make the mock return high probability (speech detected)
+        self._mock_model.return_value = MagicMock(
+            item=MagicMock(return_value=0.9)
+        )
+        vad = VADProcessor(threshold=0.5, speech_count_threshold=3)
+        audio = np.ones(512, dtype=np.int16)
+        pcm = audio.tobytes()
+        # First two calls: below threshold count
+        assert vad.is_speech(pcm) is False
+        assert vad.is_speech(pcm) is False
+        # Third call: reaches threshold
+        assert vad.is_speech(pcm) is True
+
+    def test_speech_count_resets_on_silence(self):
+        """Test that speech_count resets when a non-speech frame arrives."""
+        from prot.vad import VADProcessor
+
+        self._mock_model.return_value = MagicMock(
+            item=MagicMock(return_value=0.9)
+        )
+        vad = VADProcessor(threshold=0.5, speech_count_threshold=3)
+        audio = np.ones(512, dtype=np.int16)
+        pcm = audio.tobytes()
+        vad.is_speech(pcm)  # count=1
+        vad.is_speech(pcm)  # count=2
+        # Now simulate silence
+        self._mock_model.return_value = MagicMock(
+            item=MagicMock(return_value=0.1)
+        )
+        vad.is_speech(pcm)  # should reset count
+        assert vad._speech_count == 0
+
+    def test_model_eval_called_on_init(self):
+        """Test that model.eval() is called during initialization."""
+        from prot.vad import VADProcessor
+
+        VADProcessor()
+        self._mock_model.eval.assert_called_once()
+
+    def test_default_sample_rate(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor()
+        assert vad._sample_rate == 16000
+
+    def test_custom_speech_count_threshold(self):
+        """Test that a custom speech_count_threshold is respected."""
+        from prot.vad import VADProcessor
+
+        self._mock_model.return_value = MagicMock(
+            item=MagicMock(return_value=0.9)
+        )
+        vad = VADProcessor(threshold=0.5, speech_count_threshold=5)
+        audio = np.ones(512, dtype=np.int16)
+        pcm = audio.tobytes()
+        for _ in range(4):
+            assert vad.is_speech(pcm) is False
+        assert vad.is_speech(pcm) is True
