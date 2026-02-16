@@ -1,5 +1,7 @@
+"""Tests for prot.stt — Deepgram Flux WebSocket STT client."""
+
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from prot.stt import STTClient
 
 
@@ -38,13 +40,11 @@ class TestSTTClient:
     async def test_handle_transcript_skips_when_no_callback(self):
         with patch("prot.stt.AsyncDeepgramClient"):
             client = STTClient(api_key="test")
-        # Should not raise
         await client._handle_transcript("some text", is_final=False)
 
     async def test_handle_utterance_end_skips_when_no_callback(self):
         with patch("prot.stt.AsyncDeepgramClient"):
             client = STTClient(api_key="test")
-        # Should not raise
         await client._handle_utterance_end()
 
     def test_default_keyterms_empty(self):
@@ -61,7 +61,6 @@ class TestSTTClient:
         with patch("prot.stt.AsyncDeepgramClient"):
             client = STTClient(api_key="test", on_transcript=on_transcript)
 
-        # Build a mock result matching ListenV1ResultsEvent structure
         mock_result = MagicMock()
         mock_result.channel.alternatives = [MagicMock(transcript="안녕하세요")]
         mock_result.is_final = True
@@ -96,3 +95,27 @@ class TestSTTClient:
 
         await client._on_utt_end(MagicMock())
         assert called == [True]
+
+    async def test_send_audio_calls_send_media(self):
+        with patch("prot.stt.AsyncDeepgramClient"):
+            client = STTClient(api_key="test")
+        mock_conn = MagicMock()
+        client._connection = mock_conn
+        await client.send_audio(b"\x00" * 512)
+        mock_conn.send_media.assert_called_once_with(b"\x00" * 512)
+
+    async def test_send_audio_noop_when_no_connection(self):
+        with patch("prot.stt.AsyncDeepgramClient"):
+            client = STTClient(api_key="test")
+        await client.send_audio(b"\x00" * 512)
+
+    async def test_disconnect_cancels_recv_task(self):
+        with patch("prot.stt.AsyncDeepgramClient"):
+            client = STTClient(api_key="test")
+        mock_task = MagicMock()
+        client._recv_task = mock_task
+        client._connection_ctx = AsyncMock()
+        await client.disconnect()
+        mock_task.cancel.assert_called_once()
+        assert client._recv_task is None
+        assert client._connection is None

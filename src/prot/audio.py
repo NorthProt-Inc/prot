@@ -35,9 +35,11 @@ class AudioManager:
     def stop(self) -> None:
         """Stop and close mic stream."""
         if self._stream:
-            self._stream.stop_stream()
-            self._stream.close()
-            self._stream = None
+            try:
+                self._stream.stop_stream()
+                self._stream.close()
+            finally:
+                self._stream = None
 
     def _audio_callback(
         self,
