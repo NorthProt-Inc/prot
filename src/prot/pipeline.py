@@ -45,10 +45,16 @@ class Pipeline:
 
         self._current_transcript: str = ""
         self._active_timeout_task: asyncio.Task | None = None
-        self._loop = asyncio.get_event_loop()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    @property
+    def state(self) -> StateMachine:
+        """Expose state machine for external access (e.g., health endpoints)."""
+        return self._sm
 
     async def startup(self) -> None:
         """Initialize optional async resources (DB, GraphRAG, embedder, memory)."""
+        self._loop = asyncio.get_running_loop()
         try:
             from prot.db import init_pool
             self._pool = await init_pool()
@@ -76,14 +82,16 @@ class Pipeline:
                 rag_text = await self._memory.pre_load_context("general")
                 self._ctx.update_rag_context(rag_text)
         except Exception:
-            pass
+            logger.debug("RAG pre-load failed", exc_info=True)
 
     def on_audio_chunk(self, data: bytes) -> None:
-        """Sync callback from AudioManager — schedules async processing."""
+        """Sync callback from AudioManager (PyAudio thread) — schedules async processing."""
+        if self._loop is None:
+            return
         try:
-            self._loop.create_task(self._async_audio_chunk(data))
+            asyncio.run_coroutine_threadsafe(self._async_audio_chunk(data), self._loop)
         except RuntimeError:
-            pass
+            logger.debug("Event loop unavailable for audio chunk")
 
     async def _async_audio_chunk(self, data: bytes) -> None:
         """Process a single audio chunk: VAD check, forward to STT if needed."""
@@ -167,7 +175,8 @@ class Pipeline:
                             break
                         await self._player.play_chunk(audio_data)
 
-            await self._player.finish()
+            if self._sm.state != State.INTERRUPTED:
+                await self._player.finish()
 
             if self._sm.state == State.SPEAKING:
                 self._sm.on_tts_complete()

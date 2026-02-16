@@ -65,7 +65,7 @@ def _make_pipeline():
     # Internal state
     p._current_transcript = ""
     p._active_timeout_task: asyncio.Task | None = None
-    p._loop = asyncio.get_event_loop()
+    p._loop = asyncio.get_running_loop()
 
     return p
 
