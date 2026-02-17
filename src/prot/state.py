@@ -15,7 +15,7 @@ class StateMachine:
         State.IDLE: {State.LISTENING},
         State.LISTENING: {State.PROCESSING},
         State.PROCESSING: {State.SPEAKING},
-        State.SPEAKING: {State.ACTIVE, State.INTERRUPTED},
+        State.SPEAKING: {State.ACTIVE, State.INTERRUPTED, State.PROCESSING},
         State.ACTIVE: {State.IDLE, State.LISTENING},
         State.INTERRUPTED: {State.LISTENING},
     }
@@ -71,6 +71,10 @@ class StateMachine:
 
     def on_active_timeout(self) -> None:
         self._transition(State.IDLE)
+
+    def on_tool_iteration(self) -> None:
+        """SPEAKING -> PROCESSING for tool-use loop."""
+        self._transition(State.PROCESSING)
 
     def on_interrupt_handled(self) -> None:
         self._transition(State.LISTENING)

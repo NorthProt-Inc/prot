@@ -39,6 +39,9 @@ class STTClient:
 
     async def connect(self) -> None:
         """Open WebSocket connection to ElevenLabs and start receiving."""
+        if self._ws is not None and getattr(self._ws, "open", False):
+            logger.debug("Reusing existing STT connection")
+            return
         await self.disconnect()
         url = (
             f"{_WS_BASE}"

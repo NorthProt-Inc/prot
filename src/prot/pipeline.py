@@ -94,6 +94,12 @@ class Pipeline:
         except Exception:
             logger.debug("RAG pre-load failed", exc_info=True)
 
+        # Pre-warm TTS connection pool
+        try:
+            await self._tts.warm()
+        except Exception:
+            logger.debug("TTS warm failed", exc_info=True)
+
     def on_audio_chunk(self, data: bytes) -> None:
         """Sync callback from AudioManager (PyAudio thread) — schedules async processing."""
         if self._loop is None:
@@ -170,92 +176,134 @@ class Pipeline:
         self._save_message_bg("user", self._current_transcript)
         await self._process_response()
 
+    _MAX_TOOL_ITERATIONS = 3
+
     async def _process_response(self) -> None:
-        """Stream LLM -> TTS -> playback with producer-consumer pipeline."""
+        """Stream LLM -> TTS -> playback with producer-consumer pipeline.
+
+        Supports agentic tool loop: if the LLM returns tool_use blocks,
+        tools are executed and results fed back for up to _MAX_TOOL_ITERATIONS.
+        """
         system_blocks = self._ctx.build_system_blocks()
         tools = self._ctx.build_tools()
-        messages = self._ctx.get_messages()
-
-        _response_parts: list[str] = []
-        buffer = ""
-        audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
-        _last_pressure_log: float = 0.0
-
-        async def _produce() -> None:
-            nonlocal buffer, _last_pressure_log
-            try:
-                async for chunk in self._llm.stream_response(
-                    system_blocks, tools, messages
-                ):
-                    if self._sm.state == State.INTERRUPTED:
-                        break
-                    _response_parts.append(chunk)
-                    buffer += chunk
-                    sentences, buffer = chunk_sentences(buffer)
-                    for sentence in sentences:
-                        clean = sentence.strip()
-                        if not clean:
-                            continue
-                        async for audio in self._tts.stream_audio(clean):
-                            if self._sm.state == State.INTERRUPTED:
-                                return
-                            await audio_q.put(audio)
-                            qsz = audio_q.qsize()
-                            now = time.monotonic()
-                            if qsz >= 28 and now - _last_pressure_log >= 5.0:
-                                logger.warning("Queue pressure", qsize=qsz)
-                                _last_pressure_log = now
-                # Flush remaining
-                if buffer.strip() and self._sm.state != State.INTERRUPTED:
-                    clean = buffer.strip()
-                    if clean:
-                        async for audio in self._tts.stream_audio(clean):
-                            if self._sm.state == State.INTERRUPTED:
-                                return
-                            await audio_q.put(audio)
-            finally:
-                await audio_q.put(None)  # sentinel
-
-        async def _consume() -> None:
-            first_chunk = True
-            while True:
-                data = await audio_q.get()
-                if data is None:
-                    break
-                if self._sm.state == State.INTERRUPTED:
-                    break
-                if first_chunk:
-                    self._speaking_since = time.monotonic()
-                    first_chunk = False
-                await self._player.play_chunk(data)
 
         try:
-            logger.info("LLM streaming", model=settings.claude_model)
-            self._sm.on_tts_started()
-            await self._player.start()
+            for iteration in range(self._MAX_TOOL_ITERATIONS):
+                messages = self._ctx.get_messages()
 
-            prod = asyncio.create_task(_produce())
-            cons = asyncio.create_task(_consume())
-            done, pending = await asyncio.wait(
-                [prod, cons], return_when=asyncio.FIRST_EXCEPTION,
-            )
-            for t in pending:
-                t.cancel()
-            for t in done:
-                t.result()  # re-raise exceptions
+                _response_parts: list[str] = []
+                buffer = ""
+                audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
+                _last_pressure_log: float = 0.0
 
-            if self._sm.state != State.INTERRUPTED:
-                await self._player.finish()
+                async def _produce() -> None:
+                    nonlocal buffer, _last_pressure_log
+                    try:
+                        async for chunk in self._llm.stream_response(
+                            system_blocks, tools, messages
+                        ):
+                            if self._sm.state == State.INTERRUPTED:
+                                break
+                            _response_parts.append(chunk)
+                            buffer += chunk
+                            sentences, buffer = chunk_sentences(buffer)
+                            for sentence in sentences:
+                                clean = sentence.strip()
+                                if not clean:
+                                    continue
+                                async for audio in self._tts.stream_audio(clean):
+                                    if self._sm.state == State.INTERRUPTED:
+                                        return
+                                    await audio_q.put(audio)
+                                    qsz = audio_q.qsize()
+                                    now = time.monotonic()
+                                    if qsz >= 28 and now - _last_pressure_log >= 5.0:
+                                        logger.warning("Queue pressure", qsize=qsz)
+                                        _last_pressure_log = now
+                        # Flush remaining
+                        if buffer.strip() and self._sm.state != State.INTERRUPTED:
+                            clean = buffer.strip()
+                            if clean:
+                                async for audio in self._tts.stream_audio(clean):
+                                    if self._sm.state == State.INTERRUPTED:
+                                        return
+                                    await audio_q.put(audio)
+                    finally:
+                        await audio_q.put(None)  # sentinel
 
-            if self._sm.try_on_tts_complete():
+                async def _consume() -> None:
+                    first_chunk = True
+                    while True:
+                        data = await audio_q.get()
+                        if data is None:
+                            break
+                        if self._sm.state == State.INTERRUPTED:
+                            break
+                        if first_chunk:
+                            self._speaking_since = time.monotonic()
+                            first_chunk = False
+                        await self._player.play_chunk(data)
+
+                logger.info("LLM streaming", model=settings.claude_model, iteration=iteration)
+                self._sm.on_tts_started()  # PROCESSING -> SPEAKING
+                await self._player.start()
+
+                prod = asyncio.create_task(_produce())
+                cons = asyncio.create_task(_consume())
+                done, pending = await asyncio.wait(
+                    [prod, cons], return_when=asyncio.FIRST_EXCEPTION,
+                )
+                for t in pending:
+                    t.cancel()
+                for t in done:
+                    t.result()  # re-raise exceptions
+
+                if self._sm.state != State.INTERRUPTED:
+                    await self._player.finish()
+
+                # Check for tool use
+                tool_blocks = self._llm.get_tool_use_blocks()
+
+                if not tool_blocks:
+                    # Normal completion — no tools
+                    if self._sm.try_on_tts_complete():
+                        full_text = "".join(_response_parts)
+                        response_content = self._llm.last_response_content
+                        self._ctx.add_message("assistant", response_content or full_text)
+                        self._save_message_bg("assistant", full_text)
+                        logger.info("Response done", chars=len(full_text))
+                        reset_turn()
+                        self._start_active_timeout()
+                        self._extract_memories_bg()
+                    return
+
+                # Tool use detected — execute and loop
+                logger.info("Tool use", count=len(tool_blocks), iteration=iteration)
                 full_text = "".join(_response_parts)
                 response_content = self._llm.last_response_content
                 self._ctx.add_message("assistant", response_content or full_text)
                 self._save_message_bg("assistant", full_text)
-                logger.info("Response done", chars=len(full_text))
-                reset_turn()
-                self._start_active_timeout()
-                self._extract_memories_bg()
+
+                tool_results = []
+                for block in tool_blocks:
+                    try:
+                        result = await self._llm.execute_tool(block.name, block.input)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": str(result),
+                        })
+                    except Exception as exc:
+                        logger.warning("Tool failed", tool=block.name, error=str(exc))
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": str(exc),
+                            "is_error": True,
+                        })
+
+                self._ctx.add_message("user", tool_results)
+                self._sm.on_tool_iteration()  # SPEAKING -> PROCESSING
 
         except Exception:
             logger.exception("Error in _process_response")

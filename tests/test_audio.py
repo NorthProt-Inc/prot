@@ -2,47 +2,79 @@ from unittest.mock import MagicMock, patch
 
 from prot.audio import AudioManager
 
+_VALID_DEVICE_INFO = {"maxInputChannels": 2, "name": "Mock Mic"}
+
+
+def _patch_pa(**overrides):
+    """Patch PyAudio with a valid default device.  Override mock attrs via kwargs."""
+    p = patch("prot.audio.pyaudio.PyAudio")
+    mock_cls = p.start()
+    instance = mock_cls.return_value
+    instance.get_device_info_by_index.return_value = _VALID_DEVICE_INFO
+    for k, v in overrides.items():
+        setattr(instance, k, v)
+    return p, mock_cls, instance
+
 
 class TestAudioManager:
     def test_chunk_size_config(self):
-        with patch("prot.audio.pyaudio.PyAudio"):
+        p, *_ = _patch_pa()
+        try:
             mgr = AudioManager(device_index=11, chunk_size=512)
             assert mgr.chunk_size == 512
+        finally:
+            p.stop()
 
     def test_device_index_config(self):
-        with patch("prot.audio.pyaudio.PyAudio"):
+        p, *_ = _patch_pa()
+        try:
             mgr = AudioManager(device_index=7)
             assert mgr._device_index == 7
+        finally:
+            p.stop()
 
     def test_sample_rate_default(self):
-        with patch("prot.audio.pyaudio.PyAudio"):
+        p, *_ = _patch_pa()
+        try:
             mgr = AudioManager(device_index=11)
             assert mgr._sample_rate == 16000
+        finally:
+            p.stop()
 
     def test_callback_receives_data(self):
         received = []
-        with patch("prot.audio.pyaudio.PyAudio"):
+        p, *_ = _patch_pa()
+        try:
             mgr = AudioManager(device_index=11, on_audio=lambda d: received.append(d))
             mgr._audio_callback(b"\x00" * 1024, 512, {}, 0)
             assert len(received) == 1
             assert received[0] == b"\x00" * 1024
+        finally:
+            p.stop()
 
     def test_callback_ignores_none_data(self):
         received = []
-        with patch("prot.audio.pyaudio.PyAudio"):
+        p, *_ = _patch_pa()
+        try:
             mgr = AudioManager(device_index=11, on_audio=lambda d: received.append(d))
             result = mgr._audio_callback(None, 512, {}, 0)
             assert len(received) == 0
             assert result == (None, 0)  # pyaudio.paContinue == 0
+        finally:
+            p.stop()
 
     def test_audio_callback_returns_protocol_tuple(self):
-        with patch("prot.audio.pyaudio.PyAudio"):
+        p, *_ = _patch_pa()
+        try:
             mgr = AudioManager(device_index=11)
             result = mgr._audio_callback(b"\x00" * 512, 256, {}, 0)
             assert result == (None, 0)  # pyaudio.paContinue == 0
+        finally:
+            p.stop()
 
     def test_stop_cleans_up_stream(self):
-        with patch("prot.audio.pyaudio.PyAudio"):
+        p, *_ = _patch_pa()
+        try:
             mgr = AudioManager(device_index=11)
             mock_stream = MagicMock()
             mgr._stream = mock_stream
@@ -50,16 +82,22 @@ class TestAudioManager:
             mock_stream.stop_stream.assert_called_once()
             mock_stream.close.assert_called_once()
             assert mgr._stream is None
+        finally:
+            p.stop()
 
     def test_stop_noop_when_no_stream(self):
-        with patch("prot.audio.pyaudio.PyAudio"):
+        p, *_ = _patch_pa()
+        try:
             mgr = AudioManager(device_index=11)
             mgr.stop()  # should not raise
             assert mgr._stream is None
+        finally:
+            p.stop()
 
     def test_start_opens_stream(self):
         with patch("prot.audio.pyaudio.PyAudio") as mock_pa_cls:
             mock_pa = mock_pa_cls.return_value
+            mock_pa.get_device_info_by_index.return_value = _VALID_DEVICE_INFO
             mock_stream = MagicMock()
             mock_pa.open.return_value = mock_stream
 
@@ -78,6 +116,32 @@ class TestAudioManager:
     def test_stop_terminates_pyaudio(self):
         with patch("prot.audio.pyaudio.PyAudio") as mock_pa_cls:
             mock_pa = mock_pa_cls.return_value
+            mock_pa.get_device_info_by_index.return_value = _VALID_DEVICE_INFO
             mgr = AudioManager(device_index=11)
             mgr.stop()
             mock_pa.terminate.assert_called_once()
+
+    def test_invalid_device_index_falls_back(self):
+        """AudioManager should not crash on invalid device_index."""
+        with patch("prot.audio.pyaudio.PyAudio") as MockPa:
+            instance = MockPa.return_value
+            instance.get_device_count.return_value = 3
+            instance.get_device_info_by_index.side_effect = IOError("Invalid device")
+
+            mgr = AudioManager(device_index=999, on_audio=lambda d: None)
+            assert mgr._device_index is None
+
+    def test_valid_device_index_kept(self):
+        """AudioManager keeps valid device index."""
+        with patch("prot.audio.pyaudio.PyAudio") as MockPa:
+            instance = MockPa.return_value
+            instance.get_device_info_by_index.return_value = {"maxInputChannels": 2}
+
+            mgr = AudioManager(device_index=3, on_audio=lambda d: None)
+            assert mgr._device_index == 3
+
+    def test_negative_device_index_becomes_none(self):
+        """Negative index means use default device."""
+        with patch("prot.audio.pyaudio.PyAudio"):
+            mgr = AudioManager(device_index=-1, on_audio=lambda d: None)
+            assert mgr._device_index is None
