@@ -102,3 +102,20 @@ class TestStateMachine:
         sm = StateMachine()
         with pytest.raises(ValueError):
             sm.on_utterance_complete()  # can't go from IDLE -> PROCESSING directly
+
+    def test_tool_iteration_speaking_to_processing(self):
+        sm = StateMachine()
+        sm.on_speech_detected()       # IDLE -> LISTENING
+        sm.on_utterance_complete()    # -> PROCESSING
+        sm.on_tts_started()           # -> SPEAKING
+        sm.on_tool_iteration()        # -> PROCESSING
+        assert sm.state == State.PROCESSING
+
+    def test_tool_iteration_invalid_from_active(self):
+        sm = StateMachine()
+        sm.on_speech_detected()
+        sm.on_utterance_complete()
+        sm.on_tts_started()
+        sm.on_tts_complete()          # -> ACTIVE
+        with pytest.raises(ValueError):
+            sm.on_tool_iteration()
