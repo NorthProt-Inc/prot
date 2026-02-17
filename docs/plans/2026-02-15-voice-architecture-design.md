@@ -12,9 +12,9 @@ Half-duplex streaming with barge-in support. Single FastAPI process, systemd man
 prot.service (FastAPI)
 ├── AudioManager      — PyAudio mic input / paplay output
 ├── VADProcessor      — Silero VAD (always-on when mic active)
-├── STTClient         — Deepgram Flux WebSocket streaming
+├── STTClient         — ElevenLabs Scribe v2 Realtime WebSocket streaming
 ├── LLMClient         — Claude API streaming + tool execution
-├── TTSClient         — ElevenLabs Flash v2.5 streaming
+├── TTSClient         — ElevenLabs Multilingual v2 streaming
 └── ContextManager    — prompt cache, GraphRAG, persona, memory
 ```
 
@@ -23,13 +23,13 @@ prot.service (FastAPI)
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
 | Framework | FastAPI | Async-first, single process |
-| STT | Deepgram Flux (WebSocket) | Built-in turn detection (~260ms), Korean support |
-| LLM | Claude Opus 4.6 (`claude-opus-4-6`) | Adaptive thinking, effort parameter, prompt caching |
-| TTS | ElevenLabs Flash v2.5 (`eleven_flash_v2_5`) | 75ms TTFB, 50% cheaper, Korean support |
+| STT | ElevenLabs Scribe v2 Realtime (WebSocket) | VAD-based commit, Korean support |
+| LLM | Claude Opus 4.6 (`claude-opus-4-6`) | Adaptive thinking, effort parameter, prompt caching, compact API |
+| TTS | ElevenLabs Multilingual v2 (`eleven_multilingual_v2`) | Quality-first, Korean support |
 | Search | Anthropic `web_search_20250305` | Server-side, no MCP overhead |
 | IoT | Home Assistant (native tool, REST API) | Direct FastAPI execution, no MCP |
 | Vector DB | pgvector + PostgreSQL | Familiar, handles vectors + relational |
-| Embeddings | voyage-3.5-lite (1024dim) | Default dimension, $0.03/MTok, Matryoshka |
+| Embeddings | voyage-4-lite (1024dim) | Default dimension, $0.03/MTok, Matryoshka |
 | VAD | Silero VAD (~1MB, local) | Always-on gate, $0 cost |
 | Audio output | paplay (PulseAudio) | Simple, stable, async subprocess |
 | Deployment | Ubuntu local server, systemd | SSH access, single user |
@@ -43,11 +43,11 @@ IDLE → LISTENING → PROCESSING → SPEAKING → ACTIVE → IDLE
 ```
 
 - **IDLE**: VAD only ($0). Mic ON = conversation mode.
-- **LISTENING**: VAD speech → Deepgram WS open. Flux turn detection.
+- **LISTENING**: VAD speech → ElevenLabs Scribe WS open. VAD-based commit.
 - **PROCESSING**: Claude streaming + tool execution.
 - **SPEAKING**: TTS + paplay. VAD still active (elevated threshold).
 - **INTERRUPTED**: User speaks during TTS → kill paplay, flush TTS, cancel LLM → LISTENING.
-- **ACTIVE**: TTS done, 30s keep-alive on Deepgram WS for quick ping-pong.
+- **ACTIVE**: TTS done, 30s keep-alive on ElevenLabs WS for quick ping-pong.
 
 ## Streaming Pipeline
 
@@ -56,10 +56,10 @@ All stages overlap. Next stage starts before previous completes.
 ```
 Mic PCM (32ms chunks)
   → Silero VAD (speech gate)
-    → Deepgram Flux WS (interim → final, ~260ms turn detection)
-      → Claude streaming (adaptive thinking, medium effort)
-        → Sentence chunking + sanitize_for_tts()
-          → ElevenLabs Flash streaming (pcm_16000)
+    → ElevenLabs Scribe v2 Realtime WS (VAD commit)
+      → Claude streaming (adaptive thinking, medium effort, compact API)
+        → Sentence chunking
+          → ElevenLabs Multilingual v2 streaming (pcm_24000)
             → paplay stdin pipe
 ```
 
@@ -68,11 +68,11 @@ Mic PCM (32ms chunks)
 | Stage | Expected |
 |-------|----------|
 | VAD detection | ~96ms |
-| Deepgram Flux turn detection | ~260ms |
+| ElevenLabs Scribe VAD commit | ~200-500ms |
 | Claude TTFB (cache hit) | ~300-500ms |
 | Sentence accumulation | ~200-400ms |
-| ElevenLabs Flash TTFB | ~75ms |
-| **Total to first audio** | **~0.9-1.3s** |
+| ElevenLabs Multilingual v2 TTFB | ~200-400ms |
+| **Total to first audio** | **~1.5-3.5s** |
 
 ## Prompt Architecture (4 Cache Breakpoints)
 
@@ -92,16 +92,20 @@ Messages: conversation history
 ### LLM Configuration
 
 ```python
-response = client.messages.create(
+async with client.beta.messages.stream(
+    betas=["compact-2026-01-12"],
     model="claude-opus-4-6",
     max_tokens=1500,
     thinking={"type": "adaptive"},
-    effort="medium",               # Fixed for casual conversation
-    stream=True,
+    output_config={"effort": "medium"},   # Fixed for casual conversation
     system=[cached_persona, cached_rag, dynamic_context],
     tools=[web_search_tool, hass_tool],
     messages=conversation_history,
-)
+    context_management={
+        "edits": [{"type": "compact_20260112"}],
+    },
+) as stream:
+    ...
 ```
 
 ### Cache Strategy
@@ -144,7 +148,7 @@ Static Axel persona (~800 tokens). Voice-optimized with:
 - Cynical Tech Bro voice style
 - Korean with tech metaphors
 
-Source: `/home/cyan/workplace/prot/axel.md`
+Source: `docs/axel.json`
 
 ## Audio I/O
 
@@ -153,7 +157,7 @@ Source: `/home/cyan/workplace/prot/axel.md`
 - Device index configurable via env
 
 ### Output
-- paplay subprocess: `--format=s16le --rate=16000 --channels=1`
+- paplay subprocess: `--format=s16le --rate=24000 --channels=1`
 - Async pipe, `process.kill()` for barge-in
 
 ### Barge-in
@@ -184,7 +188,7 @@ Source: `/home/cyan/workplace/prot/axel.md`
 
 ### Embedding Pipeline
 
-- Model: voyage-3.5-lite @ 1024 dimensions (default)
+- Model: voyage-4-lite @ 1024 dimensions (default)
 - Cost: ~$0.03/MTok, ~52ms latency
 - Async client: `voyageai.AsyncClient()`
 - input_type: `"query"` for search, `"document"` for storage
@@ -197,13 +201,13 @@ CONVERSATION ENDS (30s idle → IDLE)
   → Background extraction task:
     1. Collect messages from this conversation session
     2. Send to Claude Haiku 4.5 for entity/relationship extraction (structured JSON output)
-    3. Embed entity descriptions with voyage-3.5-lite (input_type="document")
+    3. Embed entity descriptions with voyage-4-lite (input_type="document")
     4. Upsert entities + relationships into pgvector
     5. Log: extraction metrics (entities found, relationships, latency)
 
 CONVERSATION STARTS (IDLE → LISTENING)
   → Pre-load task:
-    1. Embed recent user context with voyage-3.5-lite (input_type="query")
+    1. Embed recent user context with voyage-4-lite (input_type="query")
     2. Search communities by cosine similarity (top-k, k tunable, target ~3,000 tokens)
     3. Assemble summaries into Block 2 text
     4. ContextManager.update_rag_context(assembled_text)
@@ -218,19 +222,25 @@ CONVERSATION STARTS (IDLE → LISTENING)
 
 ### Conversation Logs
 
-- Daily JSON files (archival, NOT in LLM context) — kept as-is
+- Daily JSON files in `data/conversations/` (archival, NOT in LLM context)
+  - Format: `{date}-{session_id[:8]}.json`
+  - Saved on ACTIVE→IDLE transition (session end)
+  - Contains: session_id, timestamp, messages (text-only), version
 - DB `conversation_messages` table for semantic search and extraction source
+  - Stored via `_save_message_bg()` per user/assistant turn
 
 ### Context Management
-- Compaction: `compact_20260112` for long conversations
-- Context Editing: clear old tool results (`clear_tool_uses_20250919`)
+- Compaction: `compact_20260112` via beta API (`betas=["compact-2026-01-12"]`)
+- No local sliding window — compact API manages context length natively
+- Response content blocks (including compaction) stored in context for next API call
+- Plain text extracted for DB storage and memory extraction
 
 ## Tools
 
 ### web_search (Server-side)
 - Anthropic built-in `web_search_20250305`
 - max_uses: 1 (latency constraint)
-- user_location: Seoul, KR
+- user_location: Vancouver, CA
 
 ### home_assistant (Native)
 - FastAPI directly calls HASS REST API (httpx)
@@ -243,17 +253,16 @@ CONVERSATION STARTS (IDLE → LISTENING)
 
 ## STT Correction
 
-Two-layer, no separate LLM:
-1. Deepgram `keyterm` parameter (up to 100 terms, 6x recognition boost)
-2. System prompt instruction: interpret STT errors via conversation context
+Single-layer (ElevenLabs Scribe does not support keyterm boosting):
+- System prompt instruction: interpret STT errors via conversation context
 
 ## Connection Lifecycle
 
 ```
 IDLE ($0/hr)          — Silero VAD only
-LISTENING ($0.46/hr)  — Deepgram WS active
+LISTENING             — ElevenLabs Scribe WS active
 ACTIVE (30s)          — WS keep-alive between turns
-IDLE                  — 30s silence → WS close
+IDLE                  — 30s silence → WS close, save JSON log
 ```
 
 ## Key API Notes (Opus 4.6)
@@ -261,19 +270,15 @@ IDLE                  — 30s silence → WS close
 - Model ID: `claude-opus-4-6` (no date suffix)
 - Prefill: REMOVED (400 error). Use system prompt for format control.
 - `output_format` → `output_config.format` (deprecated)
+- `effort` → `output_config: {effort: "medium"}` (top-level `effort` deprecated)
 - `thinking: {type: "enabled"}` + `budget_tokens` → deprecated. Use adaptive + effort.
+- Compact API: `betas=["compact-2026-01-12"]` + `context_management.edits`
 - Fine-grained tool streaming: GA (no beta header)
 - Max output: 128K tokens
 
 ## Post-Processing
 
 ```python
-def sanitize_for_tts(text: str) -> str:
-    text = re.sub(r'[*_#`~\[\](){}|>]', '', text)  # markdown
-    text = re.sub(r'\d+\.\s', '', text)              # numbered lists
-    text = re.sub(r'[-•]\s', '', text)                # bullets
-    return text.strip()
-
 def ensure_complete_sentence(text: str) -> str:
     for i in range(len(text)-1, -1, -1):
         if text[i] in '.!?~':
@@ -281,10 +286,12 @@ def ensure_complete_sentence(text: str) -> str:
     return text
 ```
 
+> **Note:** `sanitize_for_tts()` dropped — persona prompt enforces TTS-safe output (no markdown).
+
 ## Dependencies
 
 **Core pipeline:**
-- anthropic, deepgram-sdk, elevenlabs, pyaudio, silero-vad, httpx, fastapi, uvicorn, pydantic-settings
+- anthropic, elevenlabs, websockets, pyaudio, silero-vad, httpx, fastapi, uvicorn, pydantic-settings
 
 **Memory/GraphRAG (NEW):**
 - asyncpg, voyageai, numpy, pgvector
