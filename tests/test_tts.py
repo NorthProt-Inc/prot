@@ -149,6 +149,28 @@ class TestTTSClient:
 
             assert chunks == []
 
+    async def test_warm_initializes_connection(self):
+        """warm() should make a lightweight API call to pre-warm the connection."""
+        with patch("prot.tts.AsyncElevenLabs") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.voices.get_all = AsyncMock(return_value=[])
+
+            tts = TTSClient(api_key="test")
+            await tts.warm()
+
+            mock_client.voices.get_all.assert_awaited_once()
+
+    async def test_warm_handles_failure_gracefully(self):
+        """warm() should not raise on failure."""
+        with patch("prot.tts.AsyncElevenLabs") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.voices.get_all = AsyncMock(side_effect=RuntimeError("fail"))
+
+            tts = TTSClient(api_key="test")
+            await tts.warm()  # should not raise
+
     async def test_stream_audio_handles_network_error(self):
         """OSError → yields [], no exception."""
         with patch("prot.tts.AsyncElevenLabs") as mock_cls:

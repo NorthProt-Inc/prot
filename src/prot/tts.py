@@ -38,6 +38,14 @@ class TTSClient:
         except Exception:
             logger.exception("TTS stream failed", text=text[:30])
 
+    async def warm(self) -> None:
+        """Pre-warm HTTP connection pool by making a lightweight API call."""
+        try:
+            await self._client.voices.get_all()
+            logger.info("TTS connection warmed")
+        except Exception:
+            logger.debug("TTS warm failed", exc_info=True)
+
     def flush(self) -> None:
         """Cancel current TTS stream."""
         self._cancelled = True
