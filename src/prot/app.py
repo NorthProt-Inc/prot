@@ -29,16 +29,21 @@ async def lifespan(app: FastAPI):
     global pipeline, audio
     pipeline = Pipeline()
     await pipeline.startup()
-    audio = AudioManager(
-        device_index=settings.mic_device_index,
-        sample_rate=settings.sample_rate,
-        chunk_size=settings.chunk_size,
-        on_audio=pipeline.on_audio_chunk,
-    )
-    audio.start()
+    try:
+        audio = AudioManager(
+            device_index=settings.mic_device_index,
+            sample_rate=settings.sample_rate,
+            chunk_size=settings.chunk_size,
+            on_audio=pipeline.on_audio_chunk,
+        )
+        audio.start()
+    except Exception:
+        logger.exception("Audio init failed — running headless")
+        audio = None
     logger.info("prot started", mic=settings.mic_device_index)
     yield
-    audio.stop()
+    if audio:
+        audio.stop()
     await pipeline.shutdown()
     logger.info("prot stopped")
 
