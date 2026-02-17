@@ -10,7 +10,7 @@ from prot.context import ContextManager
 from prot.llm import LLMClient
 from prot.persona import load_persona
 from prot.playback import AudioPlayer
-from prot.processing import chunk_sentences, sanitize_for_tts
+from prot.processing import chunk_sentences
 from prot.state import State, StateMachine
 from prot.stt import STTClient
 from prot.tts import TTSClient
@@ -51,6 +51,7 @@ class Pipeline:
         self._barge_in_frames: int = 6  # ~192ms sustained speech to trigger barge-in
         self._speaking_since: float = 0.0  # monotonic time when SPEAKING entered
         self._barge_in_grace: float = 1.5  # seconds to ignore VAD after SPEAKING starts
+        self._background_tasks: set[asyncio.Task] = set()
 
     @property
     def state(self) -> StateMachine:
@@ -182,7 +183,7 @@ class Pipeline:
                     buffer += chunk
                     sentences, buffer = chunk_sentences(buffer)
                     for sentence in sentences:
-                        clean = sanitize_for_tts(sentence)
+                        clean = sentence.strip()
                         if not clean:
                             continue
                         async for audio in self._tts.stream_audio(clean):
@@ -191,7 +192,7 @@ class Pipeline:
                             await audio_q.put(audio)
                 # Flush remaining
                 if buffer.strip() and self._sm.state != State.INTERRUPTED:
-                    clean = sanitize_for_tts(buffer)
+                    clean = buffer.strip()
                     if clean:
                         async for audio in self._tts.stream_audio(clean):
                             if self._sm.state == State.INTERRUPTED:
@@ -272,7 +273,7 @@ class Pipeline:
         self._active_timeout_task = asyncio.ensure_future(_timeout())
 
     def _extract_memories_bg(self) -> None:
-        """Background task to extract and save memories — silently handles failures."""
+        """Background task to extract and save memories — tracked for shutdown cleanup."""
         if not self._memory:
             return
 
@@ -291,7 +292,9 @@ class Pipeline:
             except Exception:
                 logger.debug("Memory extraction failed", exc_info=True)
 
-        asyncio.ensure_future(_extract())
+        task = asyncio.create_task(_extract())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
     async def shutdown(self) -> None:
         """Clean shutdown of all components."""
@@ -308,6 +311,13 @@ class Pipeline:
             await self._player.kill()
         except Exception:
             logger.debug("Player kill error", exc_info=True)
+
+        # Cancel background tasks before closing pool
+        for task in self._background_tasks:
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
 
         if self._pool is not None:
             try:

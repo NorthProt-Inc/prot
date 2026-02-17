@@ -70,6 +70,7 @@ def _make_pipeline():
     p._barge_in_frames = 6
     p._speaking_since = 0.0
     p._barge_in_grace = 1.5
+    p._background_tasks = set()
 
     return p
 
@@ -394,3 +395,40 @@ class TestProcessResponse:
         assert p._sm.state != State.ACTIVE
         # finish() should not be called when interrupted
         p._player.finish.assert_not_awaited()
+
+
+class TestExtractMemoriesBg:
+    """_extract_memories_bg() — background task lifecycle."""
+
+    async def test_background_task_tracked(self):
+        """Fire-and-forget tasks should be tracked for shutdown cleanup."""
+        p = _make_pipeline()
+        mock_memory = AsyncMock()
+        mock_memory.extract_from_conversation = AsyncMock(
+            return_value={"entities": [], "relationships": []}
+        )
+        mock_memory.save_extraction = AsyncMock()
+        p._memory = mock_memory
+
+        p._extract_memories_bg()
+        assert len(p._background_tasks) == 1
+        await asyncio.sleep(0.05)
+        assert len(p._background_tasks) == 0
+
+    async def test_shutdown_cancels_background_tasks(self):
+        """shutdown() should cancel in-flight background tasks."""
+        p = _make_pipeline()
+
+        async def slow_extract(msgs):
+            await asyncio.sleep(10)
+            return {"entities": [], "relationships": []}
+
+        mock_memory = AsyncMock()
+        mock_memory.extract_from_conversation = slow_extract
+        p._memory = mock_memory
+
+        p._extract_memories_bg()
+        assert len(p._background_tasks) == 1
+
+        await p.shutdown()
+        assert len(p._background_tasks) == 0
