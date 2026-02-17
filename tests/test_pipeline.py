@@ -37,6 +37,7 @@ def _make_pipeline():
     p._llm = MagicMock()
     p._llm.cancel = MagicMock()
     p._llm.close = AsyncMock()
+    p._llm.get_tool_use_blocks = MagicMock(return_value=[])
 
     # TTS
     p._tts = MagicMock()
@@ -571,6 +572,111 @@ class TestSaveSessionLog:
         p._save_session_log()
 
         p._conv_logger.save_session.assert_not_called()
+
+
+class TestToolUseHandling:
+    """_process_response() — tool use loop execution."""
+
+    async def test_tool_use_executes_and_loops(self):
+        """When LLM returns tool_use, pipeline executes tool and calls LLM again."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        call_count = 0
+
+        async def fake_stream(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield "Let me check."
+            else:
+                yield "The light is on."
+
+        p._llm.stream_response = fake_stream
+
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "home_assistant"
+        tool_block.id = "tool_123"
+        tool_block.input = {"action": "get_state", "entity_id": "light.living"}
+
+        tc = 0
+
+        def fake_get_tool():
+            nonlocal tc
+            tc += 1
+            return [tool_block] if tc == 1 else []
+
+        p._llm.get_tool_use_blocks = fake_get_tool
+        p._llm.execute_tool = AsyncMock(return_value={"state": "on"})
+        p._llm.last_response_content = [MagicMock(type="text")]
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            await p._process_response()
+
+        assert call_count == 2
+        p._llm.execute_tool.assert_awaited_once()
+        assert p._sm.state == State.ACTIVE
+
+    async def test_tool_use_error_is_reported(self):
+        """When tool execution fails, error is sent back as tool_result."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        call_count = 0
+
+        async def fake_stream(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield "Checking."
+            else:
+                yield "Sorry, error."
+
+        p._llm.stream_response = fake_stream
+
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "home_assistant"
+        tool_block.id = "tool_456"
+        tool_block.input = {"action": "get_state", "entity_id": "light.bad"}
+
+        tc = 0
+
+        def fake_get_tool():
+            nonlocal tc
+            tc += 1
+            return [tool_block] if tc == 1 else []
+
+        p._llm.get_tool_use_blocks = fake_get_tool
+        p._llm.execute_tool = AsyncMock(side_effect=RuntimeError("HASS down"))
+        p._llm.last_response_content = [MagicMock(type="text")]
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            await p._process_response()
+
+        assert call_count == 2
+        # Tool result with error should have been added to context
+        user_calls = [c for c in p._ctx.add_message.call_args_list if c[0][0] == "user"]
+        assert len(user_calls) >= 1
+        tool_result = user_calls[0][0][1]
+        assert any("is_error" in r for r in tool_result)
 
 
 class TestSTTConnectFallback:
