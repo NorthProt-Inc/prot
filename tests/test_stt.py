@@ -167,12 +167,14 @@ class TestSTTClient:
         ws = AsyncMock()
         ws.recv = AsyncMock(side_effect=RuntimeError("handshake failed"))
         ws.close = AsyncMock()
-        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)), \
+             patch("prot.stt.asyncio.sleep", new_callable=AsyncMock):
             client = STTClient(api_key="test")
             await client.connect()
             assert client._ws is None
             assert client._recv_task is None
-            ws.close.assert_awaited_once()
+            # close called once per retry attempt (4 total)
+            assert ws.close.await_count == 4
 
     async def test_connect_ws_failure_sets_none(self):
         mock_connect = AsyncMock(side_effect=ConnectionRefusedError("refused"))
@@ -212,6 +214,60 @@ class TestSTTClient:
 
         assert ("타임스탬프 테스트", True) in transcripts
         assert utt_ends == [True]
+
+    async def test_is_connected_property(self):
+        client = STTClient(api_key="test")
+        assert client.is_connected is False
+
+        ws = _make_ws_mock()
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            await client.connect()
+            assert client.is_connected is True
+            await client.disconnect()
+            assert client.is_connected is False
+
+    async def test_connect_retries_on_failure(self):
+        """2 OSError then success → call_count == 3, sleep called with 0.5 and 1.0."""
+        ws = _make_ws_mock()
+        mock_connect = AsyncMock(
+            side_effect=[OSError("fail"), OSError("fail"), ws]
+        )
+        with patch("prot.stt.websockets.connect", mock_connect), \
+             patch("prot.stt.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            client = STTClient(api_key="test")
+            await client.connect()
+            assert mock_connect.call_count == 3
+            assert client.is_connected is True
+            assert mock_sleep.await_args_list[0].args == (0.5,)
+            assert mock_sleep.await_args_list[1].args == (1.0,)
+            await client.disconnect()
+
+    async def test_connect_exhausts_retries(self):
+        """All attempts OSError → _ws is None, call_count == 4."""
+        mock_connect = AsyncMock(side_effect=OSError("fail"))
+        with patch("prot.stt.websockets.connect", mock_connect), \
+             patch("prot.stt.asyncio.sleep", new_callable=AsyncMock):
+            client = STTClient(api_key="test")
+            await client.connect()
+            assert client._ws is None
+            assert client.is_connected is False
+            assert mock_connect.call_count == 4
+
+    async def test_connect_session_timeout(self):
+        """recv hangs → wait_for timeout → _ws is None."""
+        ws = AsyncMock()
+        ws.close = AsyncMock()
+        # recv never resolves
+        never = asyncio.get_event_loop().create_future()
+        ws.recv = AsyncMock(return_value=never)
+
+        mock_connect = AsyncMock(return_value=ws)
+        with patch("prot.stt.websockets.connect", mock_connect), \
+             patch("prot.stt.asyncio.sleep", new_callable=AsyncMock):
+            client = STTClient(api_key="test")
+            await client.connect()
+            assert client._ws is None
+            assert client.is_connected is False
 
     async def test_send_audio_disconnect_failure_clears_recv_task(self):
         """If disconnect() raises in send_audio fallback, _recv_task should be cleared."""

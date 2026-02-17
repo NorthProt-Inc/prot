@@ -55,3 +55,28 @@ class TestContextManager:
         history = cm.get_messages()
         assert len(history) == 2
         assert history[0]["role"] == "user"
+
+    def test_no_sliding_window_all_messages_retained(self):
+        """Compact API manages context — no local message trimming."""
+        cm = ContextManager(persona_text="test", rag_context="")
+        for i in range(100):
+            cm.add_message("user", f"msg-{i}")
+        assert len(cm.get_messages()) == 100
+
+    def test_add_message_with_list_content(self):
+        """Content can be a list of content blocks (compact API compaction)."""
+        cm = ContextManager(persona_text="test", rag_context="")
+        blocks = [{"type": "text", "text": "hello"}, {"type": "text", "text": "world"}]
+        cm.add_message("assistant", blocks)
+        history = cm.get_messages()
+        assert len(history) == 1
+        assert history[0]["content"] is blocks
+
+    def test_get_messages_mixed_content_types(self):
+        """Messages can have str or list content."""
+        cm = ContextManager(persona_text="test", rag_context="")
+        cm.add_message("user", "hello")
+        cm.add_message("assistant", [{"type": "text", "text": "hi"}])
+        history = cm.get_messages()
+        assert isinstance(history[0]["content"], str)
+        assert isinstance(history[1]["content"], list)

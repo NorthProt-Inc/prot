@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from uuid import uuid4
 
 from prot.config import settings
 from prot.context import ContextManager
+from prot.conversation_log import ConversationLogger
 from prot.llm import LLMClient
 from prot.persona import load_persona
 from prot.playback import AudioPlayer
@@ -37,6 +39,7 @@ class Pipeline:
         self._tts = TTSClient()
         self._player = AudioPlayer()
         self._ctx = ContextManager(persona_text=load_persona())
+        self._conv_logger = ConversationLogger()
 
         # Optional components — initialized in startup()
         self._memory = None
@@ -44,6 +47,7 @@ class Pipeline:
         self._embedder = None
         self._pool = None
 
+        self._conversation_id = uuid4()
         self._current_transcript: str = ""
         self._active_timeout_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -140,6 +144,10 @@ class Pipeline:
         self._vad.reset()
         self._current_transcript = ""
         await self._stt.connect()
+        if not self._stt.is_connected:
+            logger.warning("STT connect failed, falling back to IDLE")
+            self._sm._state = State.IDLE
+            reset_turn()
 
     async def _on_transcript(self, text: str, is_final: bool) -> None:
         """STT callback — store final transcript only."""
@@ -159,6 +167,7 @@ class Pipeline:
         await self._stt.disconnect()
 
         self._ctx.add_message("user", self._current_transcript)
+        self._save_message_bg("user", self._current_transcript)
         await self._process_response()
 
     async def _process_response(self) -> None:
@@ -167,19 +176,20 @@ class Pipeline:
         tools = self._ctx.build_tools()
         messages = self._ctx.get_messages()
 
-        full_response = ""
+        _response_parts: list[str] = []
         buffer = ""
         audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
+        _last_pressure_log: float = 0.0
 
         async def _produce() -> None:
-            nonlocal full_response, buffer
+            nonlocal buffer, _last_pressure_log
             try:
                 async for chunk in self._llm.stream_response(
                     system_blocks, tools, messages
                 ):
                     if self._sm.state == State.INTERRUPTED:
                         break
-                    full_response += chunk
+                    _response_parts.append(chunk)
                     buffer += chunk
                     sentences, buffer = chunk_sentences(buffer)
                     for sentence in sentences:
@@ -190,8 +200,11 @@ class Pipeline:
                             if self._sm.state == State.INTERRUPTED:
                                 return
                             await audio_q.put(audio)
-                            if audio_q.qsize() >= 24:
-                                logger.warning("Queue pressure", qsize=audio_q.qsize())
+                            qsz = audio_q.qsize()
+                            now = time.monotonic()
+                            if qsz >= 28 and now - _last_pressure_log >= 5.0:
+                                logger.warning("Queue pressure", qsize=qsz)
+                                _last_pressure_log = now
                 # Flush remaining
                 if buffer.strip() and self._sm.state != State.INTERRUPTED:
                     clean = buffer.strip()
@@ -235,8 +248,11 @@ class Pipeline:
                 await self._player.finish()
 
             if self._sm.try_on_tts_complete():
-                self._ctx.add_message("assistant", full_response)
-                logger.info("Response done", chars=len(full_response))
+                full_text = "".join(_response_parts)
+                response_content = self._llm.last_response_content
+                self._ctx.add_message("assistant", response_content or full_text)
+                self._save_message_bg("assistant", full_text)
+                logger.info("Response done", chars=len(full_text))
                 reset_turn()
                 self._start_active_timeout()
                 self._extract_memories_bg()
@@ -259,6 +275,10 @@ class Pipeline:
         start_turn()
         self._current_transcript = ""
         await self._stt.connect()
+        if not self._stt.is_connected:
+            logger.warning("STT reconnect failed after barge-in, falling back to IDLE")
+            self._sm._state = State.IDLE
+            reset_turn()
 
     def _start_active_timeout(self) -> None:
         """Start timer to return to IDLE after active_timeout seconds."""
@@ -271,6 +291,7 @@ class Pipeline:
                 self._sm.on_active_timeout()
                 await self._stt.disconnect()
                 self._vad.reset()
+                self._save_session_log()
 
         self._active_timeout_task = asyncio.create_task(_timeout())
 
@@ -298,6 +319,30 @@ class Pipeline:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
+    def _save_message_bg(self, role: str, content: str) -> None:
+        """Persist a conversation message to DB in the background."""
+        if not self._graphrag:
+            return
+
+        async def _save() -> None:
+            try:
+                await self._graphrag.save_message(
+                    self._conversation_id, role, content
+                )
+            except Exception:
+                logger.debug("Message save failed", exc_info=True)
+
+        task = asyncio.create_task(_save())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _save_session_log(self) -> None:
+        """Save conversation log as JSON and reset session."""
+        messages = self._ctx.get_messages()
+        if messages:
+            self._conv_logger.save_session(self._conversation_id, messages)
+        self._conversation_id = uuid4()
+
     def diagnostics(self) -> dict:
         """Return runtime diagnostics for monitoring."""
         diag = {
@@ -320,6 +365,11 @@ class Pipeline:
             except (asyncio.CancelledError, Exception):
                 pass
             self._active_timeout_task = None
+
+        try:
+            await self._llm.close()
+        except Exception:
+            logger.debug("LLM close error", exc_info=True)
 
         try:
             await self._stt.disconnect()

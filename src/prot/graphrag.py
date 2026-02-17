@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import asyncpg
 
@@ -128,6 +128,26 @@ class GraphRAGStore:
                 top_k,
             )
             return [dict(r) for r in rows]
+
+    async def save_message(
+        self,
+        conversation_id: UUID,
+        role: str,
+        content: str,
+        embedding: list[float] | None = None,
+    ) -> UUID:
+        """Persist a conversation message to the database."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """INSERT INTO conversation_messages
+                   (conversation_id, role, content, content_embedding)
+                   VALUES ($1, $2, $3, $4) RETURNING id""",
+                conversation_id,
+                role,
+                content,
+                embedding,
+            )
+            return row["id"]
 
     async def get_entity_neighbors(
         self, entity_id: UUID, max_depth: int = 1

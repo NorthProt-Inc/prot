@@ -86,8 +86,8 @@ class ContextManager:
         }
         return [web_search, hass_tool]
 
-    def add_message(self, role: str, content: str) -> None:
-        """Append a message to conversation history."""
+    def add_message(self, role: str, content: str | list) -> None:
+        """Append a message. Content can be str or list of content blocks."""
         self._messages.append({"role": role, "content": content})
 
     def get_messages(self) -> list[dict]:

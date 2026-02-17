@@ -17,6 +17,8 @@ class LLMClient:
         self._client = AsyncAnthropic(api_key=api_key or settings.anthropic_api_key)
         self._cancelled = False
         self._active_stream = None
+        self._hass_client = httpx.AsyncClient(timeout=_HASS_TIMEOUT)
+        self._last_response_content = None
 
     async def stream_response(
         self,
@@ -31,7 +33,8 @@ class LLMClient:
         self._cancelled = False
         logger.info("Streaming", model=settings.claude_model)
 
-        async with self._client.messages.stream(
+        async with self._client.beta.messages.stream(
+            betas=["compact-2026-01-12"],
             model=settings.claude_model,
             max_tokens=settings.claude_max_tokens,
             thinking={"type": "adaptive"},
@@ -39,6 +42,9 @@ class LLMClient:
             system=system_blocks,
             tools=tools if tools else None,
             messages=messages,
+            context_management={
+                "edits": [{"type": "compact_20260112"}],
+            },
         ) as stream:
             self._active_stream = stream
             async for event in stream:
@@ -50,9 +56,24 @@ class LLMClient:
 
         self._active_stream = None
 
+        try:
+            final = await stream.get_final_message()
+            self._last_response_content = final.content
+        except Exception:
+            self._last_response_content = None
+
+    @property
+    def last_response_content(self):
+        """Full response content blocks from last stream (may include compaction)."""
+        return self._last_response_content
+
     def cancel(self) -> None:
         """Cancel the active stream."""
         self._cancelled = True
+
+    async def close(self) -> None:
+        """Close persistent HTTP clients."""
+        await self._hass_client.aclose()
 
     async def execute_tool(self, tool_name: str, tool_input: dict) -> dict:
         """Execute a tool call from Claude. Returns tool result."""
@@ -70,24 +91,23 @@ class LLMClient:
         if not _ENTITY_ID_PATTERN.match(entity_id):
             return {"error": f"Invalid entity_id: {entity_id}"}
 
-        async with httpx.AsyncClient(timeout=_HASS_TIMEOUT) as http:
-            headers = {"Authorization": f"Bearer {settings.hass_token}"}
-            if action == "get_state":
-                r = await http.get(
-                    f"{settings.hass_url}/api/states/{entity_id}",
-                    headers=headers,
-                )
-                if r.status_code != 200:
-                    return {"error": f"HASS returned {r.status_code}"}
-                return r.json()
-            elif action == "call_service":
-                domain, service = entity_id.split(".", 1)
-                r = await http.post(
-                    f"{settings.hass_url}/api/services/{domain}/{service}",
-                    headers=headers,
-                    json=tool_input.get("service_data", {}),
-                )
-                if r.status_code != 200:
-                    return {"error": f"HASS returned {r.status_code}"}
-                return r.json()
+        headers = {"Authorization": f"Bearer {settings.hass_token}"}
+        if action == "get_state":
+            r = await self._hass_client.get(
+                f"{settings.hass_url}/api/states/{entity_id}",
+                headers=headers,
+            )
+            if r.status_code != 200:
+                return {"error": f"HASS returned {r.status_code}"}
+            return r.json()
+        elif action == "call_service":
+            domain, service = entity_id.split(".", 1)
+            r = await self._hass_client.post(
+                f"{settings.hass_url}/api/services/{domain}/{service}",
+                headers=headers,
+                json=tool_input.get("service_data", {}),
+            )
+            if r.status_code != 200:
+                return {"error": f"HASS returned {r.status_code}"}
+            return r.json()
         return {"error": "Invalid action"}

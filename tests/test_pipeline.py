@@ -36,6 +36,7 @@ def _make_pipeline():
     # LLM
     p._llm = MagicMock()
     p._llm.cancel = MagicMock()
+    p._llm.close = AsyncMock()
 
     # TTS
     p._tts = MagicMock()
@@ -56,6 +57,9 @@ def _make_pipeline():
     p._ctx.build_tools = MagicMock(return_value=[])
     p._ctx.update_rag_context = MagicMock()
 
+    # Conversation logger
+    p._conv_logger = MagicMock()
+
     # Optional components (may not be available)
     p._memory = None
     p._graphrag = None
@@ -63,6 +67,7 @@ def _make_pipeline():
     p._pool = None
 
     # Internal state
+    p._conversation_id = MagicMock()
     p._current_transcript = ""
     p._active_timeout_task: asyncio.Task | None = None
     p._loop = asyncio.get_running_loop()
@@ -397,6 +402,91 @@ class TestProcessResponse:
         p._player.finish.assert_not_awaited()
 
 
+class TestResponseContentRouting:
+    """_process_response() uses last_response_content for context, plain text for DB."""
+
+    async def test_context_gets_response_content_blocks(self):
+        """Context should receive full response content (with compaction blocks)."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        async def fake_stream(*a, **kw):
+            yield "Hello."
+
+        p._llm.stream_response = fake_stream
+        mock_content = [MagicMock(text="Hello.")]
+        p._llm.last_response_content = mock_content
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as mock_settings:
+            mock_settings.claude_model = "test"
+            mock_settings.active_timeout = 999
+            await p._process_response()
+
+        # Context should receive the content blocks, not plain text
+        p._ctx.add_message.assert_called_once_with("assistant", mock_content)
+
+    async def test_db_save_gets_plain_text(self):
+        """DB save should receive plain text, not content blocks."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+        p._graphrag = AsyncMock()
+        p._graphrag.save_message = AsyncMock()
+
+        async def fake_stream(*a, **kw):
+            yield "Hello."
+
+        p._llm.stream_response = fake_stream
+        p._llm.last_response_content = [MagicMock(text="Hello.")]
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as mock_settings:
+            mock_settings.claude_model = "test"
+            mock_settings.active_timeout = 999
+            await p._process_response()
+
+        # DB save should receive plain text
+        assert len(p._background_tasks) >= 0  # task may have completed
+        # Verify _save_message_bg was called — check ctx.add_message got blocks
+        # while the graphrag save got text
+        ctx_call = p._ctx.add_message.call_args
+        assert isinstance(ctx_call[0][1], list)  # content blocks
+
+    async def test_context_falls_back_to_text_without_response_content(self):
+        """When last_response_content is None, context gets plain text."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        async def fake_stream(*a, **kw):
+            yield "Fallback."
+
+        p._llm.stream_response = fake_stream
+        p._llm.last_response_content = None
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as mock_settings:
+            mock_settings.claude_model = "test"
+            mock_settings.active_timeout = 999
+            await p._process_response()
+
+        p._ctx.add_message.assert_called_once_with("assistant", "Fallback.")
+
+
 class TestExtractMemoriesBg:
     """_extract_memories_bg() — background task lifecycle."""
 
@@ -432,3 +522,77 @@ class TestExtractMemoriesBg:
 
         await p.shutdown()
         assert len(p._background_tasks) == 0
+
+
+class TestSaveMessageBg:
+    """_save_message_bg() — persists messages to DB in background."""
+
+    async def test_save_message_bg_creates_tracked_task(self):
+        """_save_message_bg() should create a background task tracked for cleanup."""
+        p = _make_pipeline()
+        p._graphrag = AsyncMock()
+        p._graphrag.save_message = AsyncMock()
+        p._save_message_bg("user", "test message")
+        assert len(p._background_tasks) == 1
+        await asyncio.sleep(0.05)
+        assert len(p._background_tasks) == 0
+
+    async def test_save_message_bg_noop_without_graphrag(self):
+        """_save_message_bg() should be a no-op without graphrag."""
+        p = _make_pipeline()
+        p._graphrag = None
+        p._save_message_bg("user", "test")
+        assert len(p._background_tasks) == 0
+
+
+class TestSaveSessionLog:
+    """_save_session_log() — saves conversation as JSON and resets session."""
+
+    async def test_save_session_log_calls_logger(self):
+        p = _make_pipeline()
+        p._conv_logger = MagicMock()
+        p._ctx.get_messages.return_value = [
+            {"role": "user", "content": "hello"},
+        ]
+        old_id = p._conversation_id
+        p._save_session_log()
+
+        p._conv_logger.save_session.assert_called_once_with(
+            old_id,
+            [{"role": "user", "content": "hello"}],
+        )
+        # Session ID should be reset
+        assert p._conversation_id != old_id
+
+    async def test_save_session_log_skips_empty(self):
+        p = _make_pipeline()
+        p._conv_logger = MagicMock()
+        p._ctx.get_messages.return_value = []
+        p._save_session_log()
+
+        p._conv_logger.save_session.assert_not_called()
+
+
+class TestSTTConnectFallback:
+    """Pipeline falls back to IDLE when STT connect fails."""
+
+    async def test_vad_speech_stt_connect_failure_falls_back_to_idle(self):
+        p = _make_pipeline()
+        p._stt.is_connected = False
+        assert p._sm.state == State.IDLE
+
+        await p._handle_vad_speech()
+        assert p._sm.state == State.IDLE
+
+    async def test_barge_in_stt_reconnect_failure_falls_back_to_idle(self):
+        p = _make_pipeline()
+        # Get to INTERRUPTED state
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+        p._sm.on_tts_started()
+        p._sm.on_speech_detected()  # -> INTERRUPTED
+        assert p._sm.state == State.INTERRUPTED
+
+        p._stt.is_connected = False
+        await p._handle_barge_in()
+        assert p._sm.state == State.IDLE

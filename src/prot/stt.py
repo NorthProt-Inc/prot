@@ -33,36 +33,64 @@ class STTClient:
         self._ws: websockets.ClientConnection | None = None
         self._recv_task: asyncio.Task | None = None
 
+    @property
+    def is_connected(self) -> bool:
+        return self._ws is not None
+
     async def connect(self) -> None:
         """Open WebSocket connection to ElevenLabs and start receiving."""
         await self.disconnect()
-        try:
-            url = (
-                f"{_WS_BASE}"
-                f"?model_id=scribe_v2_realtime"
-                f"&language_code={settings.stt_language}"
-                f"&audio_format=pcm_{settings.sample_rate}"
-                f"&commit_strategy=vad"
-            )
-            headers = {"xi-api-key": self._api_key}
-            self._ws = await websockets.connect(url, additional_headers=headers)
+        url = (
+            f"{_WS_BASE}"
+            f"?model_id=scribe_v2_realtime"
+            f"&language_code={settings.stt_language}"
+            f"&audio_format=pcm_{settings.sample_rate}"
+            f"&commit_strategy=vad"
+        )
+        headers = {"xi-api-key": self._api_key}
+        delays = [0.5, 1.0, 2.0]
+        max_attempts = len(delays) + 1  # 4 total
 
-            # Wait for session_started
-            raw = await self._ws.recv()
-            session = json.loads(raw)
-            if session.get("message_type") != "session_started":
-                logger.warning("Unexpected first message", msg=session)
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self._ws = await websockets.connect(
+                    url, additional_headers=headers, open_timeout=5,
+                )
+                raw = await asyncio.wait_for(self._ws.recv(), timeout=5.0)
+                session = json.loads(raw)
+                if session.get("message_type") != "session_started":
+                    logger.warning("Unexpected first message", msg=session)
 
-            logger.info("Connected", model="scribe_v2_realtime", lang=settings.stt_language)
-            self._recv_task = asyncio.create_task(self._recv_loop())
-        except Exception:
-            logger.exception("STT connect failed")
-            if self._ws:
-                try:
-                    await self._ws.close()
-                except Exception:
-                    pass
-            self._ws = None
+                logger.info(
+                    "Connected",
+                    model="scribe_v2_realtime",
+                    lang=settings.stt_language,
+                    attempt=attempt,
+                )
+                self._recv_task = asyncio.create_task(self._recv_loop())
+                return
+            except Exception:
+                if self._ws:
+                    try:
+                        await self._ws.close()
+                    except Exception:
+                        pass
+                    self._ws = None
+
+                if attempt < max_attempts:
+                    delay = delays[attempt - 1]
+                    logger.warning(
+                        "STT connect failed, retrying",
+                        attempt=attempt,
+                        delay=delay,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.exception(
+                        "STT connect failed after all retries",
+                        attempts=max_attempts,
+                    )
+                    self._ws = None
 
     async def send_audio(self, data: bytes) -> None:
         """Send PCM audio chunk to ElevenLabs."""

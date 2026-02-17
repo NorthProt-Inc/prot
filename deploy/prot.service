@@ -10,7 +10,7 @@ EnvironmentFile=/home/cyan/workplace/prot/.env
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/cyan/workplace/prot/.venv/bin/uvicorn prot.app:app --host 0.0.0.0 --port 8000 --log-level info
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 
 [Install]
 WantedBy=default.target

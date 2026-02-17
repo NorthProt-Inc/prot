@@ -1,7 +1,7 @@
 import pytest
 from prot.llm import LLMClient
 from prot.context import ContextManager
-from prot.processing import sanitize_for_tts, chunk_sentences
+from prot.processing import chunk_sentences
 from prot.persona import load_persona
 
 @pytest.mark.integration
@@ -22,10 +22,6 @@ async def test_text_to_text_pipeline():
         raw += chunk
 
     assert len(raw) > 0
-    sanitized = sanitize_for_tts(raw)
-    sentences, remainder = chunk_sentences(sanitized)
+    sentences, remainder = chunk_sentences(raw)
     assert len(sentences) + (1 if remainder else 0) >= 1
-    # Verify no markdown artifacts
-    assert "**" not in sanitized
-    assert "##" not in sanitized
-    print(f"\nAxel: {sanitized}")
+    print(f"\nAxel: {raw}")

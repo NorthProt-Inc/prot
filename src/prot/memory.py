@@ -13,6 +13,20 @@ from prot.log import get_logger
 
 logger = get_logger(__name__)
 
+
+def _content_to_text(content) -> str:
+    """Extract plain text from str or list of content blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            block.text if hasattr(block, "text") else
+            str(block.get("text", "")) if isinstance(block, dict) else ""
+            for block in content
+        )
+    return str(content)
+
+
 EXTRACTION_PROMPT = """Extract entities and relationships from this conversation.
 
 Return JSON with this exact structure:
@@ -41,7 +55,7 @@ class MemoryExtractor:
         """Use Haiku 4.5 to extract entities and relationships from conversation."""
         logger.info("Extracting", messages=len(messages))
         conversation_text = "\n".join(
-            f"{m['role']}: {m['content']}" for m in messages
+            f"{m['role']}: {_content_to_text(m['content'])}" for m in messages
         )
         response = await self._llm.messages.create(
             model=settings.memory_extraction_model,
@@ -100,20 +114,41 @@ class MemoryExtractor:
                         )
 
     async def pre_load_context(self, query: str) -> str:
-        """Search GraphRAG and assemble Block 2 context text."""
+        """Search GraphRAG (entities + neighbors + communities) and assemble Block 2 context."""
         query_embedding = await self._embedder.embed_query(query)
+
+        parts: list[str] = []
+        token_estimate = 0
+
+        def _add(text: str) -> bool:
+            nonlocal token_estimate
+            token_estimate += len(text) // 4
+            if token_estimate > settings.rag_context_target_tokens:
+                return False
+            parts.append(text)
+            return True
+
+        # 1. Entity semantic search + neighbor traversal
+        entities = await self._store.search_entities_semantic(
+            query_embedding=query_embedding, top_k=5,
+        )
+        for entity in entities:
+            line = f"- {entity['name']} ({entity['entity_type']}): {entity['description']}"
+            if not _add(line):
+                break
+            neighbors = await self._store.get_entity_neighbors(entity["id"], max_depth=1)
+            for n in neighbors[:3]:
+                nline = f"  > {n['name']}: {n['description']}"
+                if not _add(nline):
+                    break
+
+        # 2. Community summaries
         communities = await self._store.search_communities(
             query_embedding=query_embedding,
             top_k=settings.rag_top_k,
         )
-
-        parts = []
-        token_estimate = 0
         for community in communities:
-            summary = community["summary"]
-            parts.append(summary)
-            token_estimate += len(summary) // 4
-            if token_estimate >= settings.rag_context_target_tokens:
+            if not _add(community["summary"]):
                 break
 
-        return "\n\n".join(parts) if parts else "(no memory context)"
+        return "\n".join(parts) if parts else "(no memory context)"

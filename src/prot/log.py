@@ -189,8 +189,3 @@ def setup_logging(level: str | None = None) -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(SmartFormatter())
     root.addHandler(handler)
-
-
-def set_log_level(level: str) -> None:
-    """Change root log level at runtime."""
-    logging.getLogger().setLevel(getattr(logging, level.upper(), logging.INFO))

@@ -277,6 +277,48 @@ class TestSearchCommunities:
         assert results[0]["similarity"] == 0.92
 
 
+class TestSaveMessage:
+    """save_message should persist a conversation message."""
+
+    async def test_save_message(self) -> None:
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+
+        msg_id = uuid4()
+        conv_id = uuid4()
+        conn.fetchrow = AsyncMock(return_value=mock_record(id=msg_id))
+
+        result = await store.save_message(
+            conversation_id=conv_id,
+            role="user",
+            content="Hello world",
+        )
+
+        assert result == msg_id
+        call = conn.fetchrow.call_args
+        assert "conversation_messages" in call.args[0]
+        assert "INSERT" in call.args[0]
+
+    async def test_save_message_with_embedding(self) -> None:
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+
+        msg_id = uuid4()
+        conn.fetchrow = AsyncMock(return_value=mock_record(id=msg_id))
+
+        result = await store.save_message(
+            conversation_id=uuid4(),
+            role="assistant",
+            content="Hi there",
+            embedding=[0.1] * 1024,
+        )
+
+        assert result == msg_id
+        # Verify embedding was passed as 4th positional arg
+        call = conn.fetchrow.call_args
+        assert call.args[4] == [0.1] * 1024
+
+
 class TestGetEntityNeighbors:
     """get_entity_neighbors should return neighboring entities."""
 

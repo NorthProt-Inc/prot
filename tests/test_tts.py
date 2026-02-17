@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from prot.tts import TTSClient
@@ -126,3 +127,45 @@ class TestTTSClient:
 
             assert len(chunks) == 1
             assert tts._cancelled is False
+
+    async def test_stream_audio_handles_connect_error(self):
+        """httpx.ConnectError → yields [], no exception."""
+        with patch("prot.tts.AsyncElevenLabs") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+
+            async def _raise_connect(*a, **kw):
+                raise httpx.ConnectError("connection refused")
+                yield  # make it a generator  # noqa: E501
+
+            mock_client.text_to_speech.stream = MagicMock(
+                return_value=_raise_connect()
+            )
+
+            tts = TTSClient(api_key="test")
+            chunks = []
+            async for chunk in tts.stream_audio("test"):
+                chunks.append(chunk)
+
+            assert chunks == []
+
+    async def test_stream_audio_handles_network_error(self):
+        """OSError → yields [], no exception."""
+        with patch("prot.tts.AsyncElevenLabs") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+
+            async def _raise_os(*a, **kw):
+                raise OSError("network unreachable")
+                yield  # make it a generator  # noqa: E501
+
+            mock_client.text_to_speech.stream = MagicMock(
+                return_value=_raise_os()
+            )
+
+            tts = TTSClient(api_key="test")
+            chunks = []
+            async for chunk in tts.stream_audio("test"):
+                chunks.append(chunk)
+
+            assert chunks == []
