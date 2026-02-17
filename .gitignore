@@ -21,6 +21,9 @@ wheels/
 .vscode/
 *.swp
 
+# Worktrees
+.worktrees/
+
 # Reference / legacy projects
 axel/
 genuine-axel-main/
