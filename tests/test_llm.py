@@ -170,3 +170,22 @@ class TestLLMClient:
         client._hass_client = AsyncMock()
         await client.close()
         client._hass_client.aclose.assert_awaited_once()
+
+
+class TestToolDetection:
+    def test_get_tool_use_blocks_extracts_tools(self):
+        client = LLMClient.__new__(LLMClient)
+        tool = MagicMock(type="tool_use")
+        text = MagicMock(type="text")
+        client._last_response_content = [text, tool]
+        assert client.get_tool_use_blocks() == [tool]
+
+    def test_get_tool_use_blocks_empty_when_no_tools(self):
+        client = LLMClient.__new__(LLMClient)
+        client._last_response_content = [MagicMock(type="text")]
+        assert client.get_tool_use_blocks() == []
+
+    def test_get_tool_use_blocks_empty_when_none(self):
+        client = LLMClient.__new__(LLMClient)
+        client._last_response_content = None
+        assert client.get_tool_use_blocks() == []

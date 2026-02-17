@@ -67,6 +67,12 @@ class LLMClient:
         """Full response content blocks from last stream (may include compaction)."""
         return self._last_response_content
 
+    def get_tool_use_blocks(self) -> list:
+        """Extract tool_use blocks from last response."""
+        if not self._last_response_content:
+            return []
+        return [b for b in self._last_response_content if getattr(b, "type", None) == "tool_use"]
+
     def cancel(self) -> None:
         """Cancel the active stream."""
         self._cancelled = True
