@@ -4,7 +4,6 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # API Keys
     anthropic_api_key: str
-    deepgram_api_key: str
     elevenlabs_api_key: str
 
     # Audio
@@ -16,11 +15,8 @@ class Settings(BaseSettings):
     vad_threshold: float = 0.5
     vad_threshold_speaking: float = 0.8
 
-    # Deepgram
-    deepgram_model: str = "nova-3"
-    deepgram_language: str = "ko"
-    deepgram_endpointing: int = 500
-    deepgram_utterance_end_ms: int = 2000
+    # STT
+    stt_language: str = "ko"
 
     # LLM
     claude_model: str = "claude-opus-4-6"

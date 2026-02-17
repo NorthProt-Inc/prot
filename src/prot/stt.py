@@ -1,82 +1,87 @@
-"""Deepgram Nova-3 WebSocket streaming STT client."""
+"""ElevenLabs Scribe v2 Realtime WebSocket streaming STT client."""
 
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 from collections.abc import Awaitable, Callable
-from typing import Any
 
-from deepgram import AsyncDeepgramClient
-from deepgram.extensions.types.sockets.listen_v1_results_event import (
-    ListenV1ResultsEvent,
-)
-from deepgram.extensions.types.sockets.listen_v1_utterance_end_event import (
-    ListenV1UtteranceEndEvent,
-)
-from websockets.exceptions import ConnectionClosedOK
+import websockets
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
 from prot.config import settings
 from prot.log import get_logger
 
 logger = get_logger(__name__)
 
+_WS_BASE = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
+
 
 class STTClient:
-    """Deepgram Nova-3 WebSocket streaming client."""
+    """ElevenLabs Scribe v2 Realtime WebSocket streaming client."""
 
     def __init__(
         self,
         api_key: str | None = None,
         on_transcript: Callable[[str, bool], Awaitable[None]] | None = None,
         on_utterance_end: Callable[[], Awaitable[None]] | None = None,
-        keyterms: list[str] | None = None,
     ) -> None:
-        self._client = AsyncDeepgramClient(
-            api_key=api_key or settings.deepgram_api_key,
-        )
-        self._connection: Any = None
-        self._connection_ctx: Any = None
+        self._api_key = api_key or settings.elevenlabs_api_key
         self._on_transcript = on_transcript
         self._on_utterance_end = on_utterance_end
-        self._keyterms = keyterms or []
+        self._ws: websockets.ClientConnection | None = None
         self._recv_task: asyncio.Task | None = None
 
     async def connect(self) -> None:
-        """Open WebSocket connection to Deepgram and start receiving."""
+        """Open WebSocket connection to ElevenLabs and start receiving."""
         await self.disconnect()
         try:
-            self._connection_ctx = self._client.listen.v1.connect(
-                model=settings.deepgram_model,
-                language=settings.deepgram_language,
-                encoding="linear16",
-                sample_rate=str(settings.sample_rate),
-                channels="1",
-                smart_format="true",
-                interim_results="true",
-                utterance_end_ms=str(settings.deepgram_utterance_end_ms),
-                endpointing=str(settings.deepgram_endpointing),
-                keyterm=self._keyterms if self._keyterms else None,
+            url = (
+                f"{_WS_BASE}"
+                f"?model_id=scribe_v2_realtime"
+                f"&language_code={settings.stt_language}"
+                f"&audio_format=pcm_{settings.sample_rate}"
+                f"&commit_strategy=vad"
             )
-            self._connection = await self._connection_ctx.__aenter__()
-            logger.info("Connected", model=settings.deepgram_model, lang=settings.deepgram_language)
+            headers = {"xi-api-key": self._api_key}
+            self._ws = await websockets.connect(url, additional_headers=headers)
+
+            # Wait for session_started
+            raw = await self._ws.recv()
+            session = json.loads(raw)
+            if session.get("message_type") != "session_started":
+                logger.warning("Unexpected first message", msg=session)
+
+            logger.info("Connected", model="scribe_v2_realtime", lang=settings.stt_language)
             self._recv_task = asyncio.create_task(self._recv_loop())
         except Exception:
             logger.exception("STT connect failed")
-            self._connection = None
-            self._connection_ctx = None
+            if self._ws:
+                try:
+                    await self._ws.close()
+                except Exception:
+                    pass
+            self._ws = None
 
     async def send_audio(self, data: bytes) -> None:
-        """Send PCM audio chunk to Deepgram."""
-        if self._connection:
+        """Send PCM audio chunk to ElevenLabs."""
+        if self._ws is None:
+            return
+        try:
+            msg = json.dumps({
+                "message_type": "input_audio_chunk",
+                "audio_base_64": base64.b64encode(data).decode(),
+                "commit": False,
+                "sample_rate": settings.sample_rate,
+            })
+            await self._ws.send(msg)
+        except Exception:
+            logger.warning("Send failed, disconnecting")
             try:
-                await self._connection.send_media(data)
+                await self.disconnect()
             except Exception:
-                logger.warning("Send failed, disconnecting")
-                try:
-                    await self.disconnect()
-                except Exception:
-                    self._connection = None
-                    self._connection_ctx = None
+                self._ws = None
 
     async def disconnect(self) -> None:
         """Close WebSocket connection."""
@@ -87,60 +92,56 @@ class STTClient:
             except (asyncio.CancelledError, Exception):
                 pass
             self._recv_task = None
-        if self._connection_ctx:
-            await self._connection_ctx.__aexit__(None, None, None)
-            self._connection = None
-            self._connection_ctx = None
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
 
     async def _recv_loop(self) -> None:
-        """Receive and dispatch messages from Deepgram."""
-        conn = self._connection
-        while conn:
+        """Receive and dispatch messages from ElevenLabs."""
+        ws = self._ws
+        while True:
             try:
-                result = await conn.recv()
-            except ConnectionClosedOK:
-                logger.debug("STT websocket closed normally")
+                raw = await ws.recv()
+            except (ConnectionClosedOK, ConnectionClosedError):
+                logger.debug("STT websocket closed")
                 break
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception("STT recv error")
                 break
-            if isinstance(result, ListenV1ResultsEvent):
-                await self._on_message(result)
-            elif isinstance(result, ListenV1UtteranceEndEvent):
-                await self._on_utt_end(result)
 
-    async def _on_message(self, result: ListenV1ResultsEvent) -> None:
-        """Handle a transcript result event."""
-        alt = result.channel.alternatives[0]
-        if not alt.transcript:
-            return
-        # Reconstruct from words array for proper Korean spacing
-        if alt.words:
-            transcript = " ".join(
-                w.punctuated_word or w.word for w in alt.words
-            )
-            transcript = " ".join(transcript.split())  # normalize spaces
-            logger.debug(
-                "STT words",
-                raw=alt.transcript[:80],
-                reconstructed=transcript[:80],
-                n=len(alt.words),
-            )
-        else:
-            transcript = alt.transcript
-        is_final = result.is_final
-        await self._handle_transcript(transcript, is_final)
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning("Non-JSON message from STT")
+                continue
 
-    async def _on_utt_end(self, result: Any) -> None:
-        """Handle an utterance end event."""
-        await self._handle_utterance_end()
+            msg_type = msg.get("message_type", "")
 
-    async def _handle_transcript(self, text: str, is_final: bool) -> None:
+            if msg_type == "partial_transcript":
+                text = msg.get("text", "")
+                if text:
+                    await self._fire_transcript(text, is_final=False)
+
+            elif msg_type in ("committed_transcript", "committed_transcript_with_timestamps"):
+                text = msg.get("text", "")
+                if text:
+                    await self._fire_transcript(text, is_final=True)
+                    await self._fire_utterance_end()
+
+            elif msg_type in ("error", "auth_error", "input_error"):
+                logger.error("STT error", error=msg.get("error", ""))
+
+    async def _fire_transcript(self, text: str, is_final: bool) -> None:
         """Invoke the transcript callback if registered."""
         if self._on_transcript:
             await self._on_transcript(text, is_final)
 
-    async def _handle_utterance_end(self) -> None:
+    async def _fire_utterance_end(self) -> None:
         """Invoke the utterance end callback if registered."""
         if self._on_utterance_end:
             await self._on_utterance_end()

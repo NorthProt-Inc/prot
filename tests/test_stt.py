@@ -1,136 +1,214 @@
-"""Tests for prot.stt — Deepgram Flux WebSocket STT client."""
+"""Tests for prot.stt — ElevenLabs Scribe v2 Realtime WebSocket STT client."""
+
+import asyncio
+import base64
+import json
 
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, patch
+
 from prot.stt import STTClient
+
+_SESSION_MSG = json.dumps({
+    "message_type": "session_started",
+    "session_id": "test-session",
+    "config": {},
+})
+
+
+def _make_ws_mock(recv_messages=None):
+    """Create a mock WebSocket with configurable recv sequence."""
+    ws = AsyncMock()
+    ws.close = AsyncMock()
+    side = [_SESSION_MSG]
+    if recv_messages:
+        side.extend(recv_messages)
+    side.append(asyncio.CancelledError())
+    ws.recv = AsyncMock(side_effect=side)
+    ws.send = AsyncMock()
+    return ws
 
 
 @pytest.mark.asyncio
 class TestSTTClient:
-    async def test_on_transcript_callback(self):
-        transcripts = []
-
-        async def on_transcript(text, is_final):
-            transcripts.append((text, is_final))
-
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test", on_transcript=on_transcript)
-        await client._handle_transcript("테스트 문장", is_final=True)
-        assert transcripts == [("테스트 문장", True)]
-
-    async def test_on_utterance_end_callback(self):
-        called = []
-
-        async def on_end():
-            called.append(True)
-
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test", on_utterance_end=on_end)
-        await client._handle_utterance_end()
-        assert called == [True]
-
-    def test_keyterms_configured(self):
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(
-                api_key="test",
-                keyterms=["Axel", "NorthProt"],
-            )
-        assert client._keyterms == ["Axel", "NorthProt"]
-
-    async def test_handle_transcript_skips_when_no_callback(self):
-        with patch("prot.stt.AsyncDeepgramClient"):
+    async def test_send_audio_encodes_base64_json(self):
+        ws = _make_ws_mock()
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
             client = STTClient(api_key="test")
-        await client._handle_transcript("some text", is_final=False)
+            await client.connect()
+            await client.send_audio(b"\x00" * 512)
+            await client.disconnect()
 
-    async def test_handle_utterance_end_skips_when_no_callback(self):
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test")
-        await client._handle_utterance_end()
-
-    def test_default_keyterms_empty(self):
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test")
-        assert client._keyterms == []
-
-    async def test_on_message_extracts_transcript(self):
-        transcripts = []
-
-        async def on_transcript(text, is_final):
-            transcripts.append((text, is_final))
-
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test", on_transcript=on_transcript)
-
-        mock_word = MagicMock()
-        mock_word.punctuated_word = "안녕하세요"
-        mock_word.word = "안녕하세요"
-        mock_alt = MagicMock(transcript="안녕하세요", words=[mock_word])
-        mock_result = MagicMock()
-        mock_result.channel.alternatives = [mock_alt]
-        mock_result.is_final = True
-
-        await client._on_message(mock_result)
-        assert transcripts == [("안녕하세요", True)]
-
-    async def test_on_message_skips_empty_transcript(self):
-        transcripts = []
-
-        async def on_transcript(text, is_final):
-            transcripts.append((text, is_final))
-
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test", on_transcript=on_transcript)
-
-        mock_result = MagicMock()
-        mock_result.channel.alternatives = [MagicMock(transcript="")]
-        mock_result.is_final = False
-
-        await client._on_message(mock_result)
-        assert transcripts == []
-
-    async def test_on_utt_end_triggers_callback(self):
-        called = []
-
-        async def on_end():
-            called.append(True)
-
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test", on_utterance_end=on_end)
-
-        await client._on_utt_end(MagicMock())
-        assert called == [True]
-
-    async def test_send_audio_calls_send_media(self):
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test")
-        mock_conn = MagicMock()
-        client._connection = mock_conn
-        await client.send_audio(b"\x00" * 512)
-        mock_conn.send_media.assert_called_once_with(b"\x00" * 512)
+        call_args = ws.send.call_args[0][0]
+        msg = json.loads(call_args)
+        assert msg["message_type"] == "input_audio_chunk"
+        assert msg["sample_rate"] == 16000
+        assert msg["commit"] is False
+        raw = base64.b64decode(msg["audio_base_64"])
+        assert raw == b"\x00" * 512
 
     async def test_send_audio_noop_when_no_connection(self):
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test")
-        await client.send_audio(b"\x00" * 512)
+        client = STTClient(api_key="test")
+        await client.send_audio(b"\x00" * 512)  # should not raise
 
-    async def test_send_audio_disconnect_on_failure(self):
-        with patch("prot.stt.AsyncDeepgramClient"):
-            client = STTClient(api_key="test")
-        mock_conn = MagicMock()
-        mock_conn.send_media = AsyncMock(side_effect=RuntimeError("boom"))
-        client._connection = mock_conn
-        client.disconnect = AsyncMock()
+    async def test_partial_transcript_callback(self):
+        transcripts = []
 
-        await client.send_audio(b"\x00" * 512)
-        client.disconnect.assert_awaited_once()
+        async def on_transcript(text, is_final):
+            transcripts.append((text, is_final))
+
+        ws = _make_ws_mock([
+            json.dumps({"message_type": "partial_transcript", "text": "안녕하세요"}),
+        ])
+
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            client = STTClient(api_key="test", on_transcript=on_transcript)
+            await client.connect()
+            await asyncio.sleep(0.05)
+            await client.disconnect()
+
+        assert ("안녕하세요", False) in transcripts
+
+    async def test_committed_transcript_callback(self):
+        transcripts = []
+        utt_ends = []
+
+        async def on_transcript(text, is_final):
+            transcripts.append((text, is_final))
+
+        async def on_utt_end():
+            utt_ends.append(True)
+
+        ws = _make_ws_mock([
+            json.dumps({"message_type": "committed_transcript", "text": "테스트 문장입니다"}),
+        ])
+
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            client = STTClient(
+                api_key="test",
+                on_transcript=on_transcript,
+                on_utterance_end=on_utt_end,
+            )
+            await client.connect()
+            await asyncio.sleep(0.05)
+            await client.disconnect()
+
+        assert ("테스트 문장입니다", True) in transcripts
+        assert utt_ends == [True]
+
+    async def test_empty_transcript_skipped(self):
+        transcripts = []
+
+        async def on_transcript(text, is_final):
+            transcripts.append((text, is_final))
+
+        ws = _make_ws_mock([
+            json.dumps({"message_type": "partial_transcript", "text": ""}),
+            json.dumps({"message_type": "committed_transcript", "text": ""}),
+        ])
+
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            client = STTClient(api_key="test", on_transcript=on_transcript)
+            await client.connect()
+            await asyncio.sleep(0.05)
+            await client.disconnect()
+
+        assert transcripts == []
 
     async def test_disconnect_cancels_recv_task(self):
-        with patch("prot.stt.AsyncDeepgramClient"):
+        ws = _make_ws_mock()
+        # Override recv to block forever after session_started
+        future = asyncio.get_event_loop().create_future()
+        ws.recv = AsyncMock(side_effect=[_SESSION_MSG, future])
+
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
             client = STTClient(api_key="test")
-        mock_task = MagicMock()
-        client._recv_task = mock_task
-        client._connection_ctx = AsyncMock()
-        await client.disconnect()
-        mock_task.cancel.assert_called_once()
-        assert client._recv_task is None
-        assert client._connection is None
+            await client.connect()
+            assert client._recv_task is not None
+            await client.disconnect()
+            assert client._recv_task is None
+            assert client._ws is None
+
+    async def test_disconnect_noop_when_not_connected(self):
+        client = STTClient(api_key="test")
+        await client.disconnect()  # should not raise
+
+    async def test_no_callbacks_no_error(self):
+        ws = _make_ws_mock([
+            json.dumps({"message_type": "committed_transcript", "text": "hello"}),
+        ])
+
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            client = STTClient(api_key="test")
+            await client.connect()
+            await asyncio.sleep(0.05)
+            await client.disconnect()
+
+    async def test_send_audio_disconnect_on_failure(self):
+        ws = _make_ws_mock()
+        ws.send = AsyncMock(side_effect=RuntimeError("boom"))
+
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            client = STTClient(api_key="test")
+            await client.connect()
+            client.disconnect = AsyncMock()
+            await client.send_audio(b"\x00" * 512)
+            client.disconnect.assert_awaited_once()
+
+    async def test_connect_reconnects_if_already_connected(self):
+        mock_connect = AsyncMock(side_effect=[_make_ws_mock(), _make_ws_mock()])
+        with patch("prot.stt.websockets.connect", mock_connect):
+            client = STTClient(api_key="test")
+            await client.connect()
+            await client.connect()  # should disconnect first, then reconnect
+            assert mock_connect.call_count == 2
+
+    async def test_connect_failure_closes_ws_and_sets_none(self):
+        ws = AsyncMock()
+        ws.recv = AsyncMock(side_effect=RuntimeError("handshake failed"))
+        ws.close = AsyncMock()
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            client = STTClient(api_key="test")
+            await client.connect()
+            assert client._ws is None
+            assert client._recv_task is None
+            ws.close.assert_awaited_once()
+
+    async def test_connect_ws_failure_sets_none(self):
+        mock_connect = AsyncMock(side_effect=ConnectionRefusedError("refused"))
+        with patch("prot.stt.websockets.connect", mock_connect):
+            client = STTClient(api_key="test")
+            await client.connect()
+            assert client._ws is None
+            assert client._recv_task is None
+
+    async def test_committed_transcript_with_timestamps(self):
+        transcripts = []
+        utt_ends = []
+
+        async def on_transcript(text, is_final):
+            transcripts.append((text, is_final))
+
+        async def on_utt_end():
+            utt_ends.append(True)
+
+        ws = _make_ws_mock([
+            json.dumps({
+                "message_type": "committed_transcript_with_timestamps",
+                "text": "타임스탬프 테스트",
+                "words": [{"text": "타임스탬프", "start": 0.0, "end": 0.5}],
+            }),
+        ])
+
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            client = STTClient(
+                api_key="test",
+                on_transcript=on_transcript,
+                on_utterance_end=on_utt_end,
+            )
+            await client.connect()
+            await asyncio.sleep(0.05)
+            await client.disconnect()
+
+        assert ("타임스탬프 테스트", True) in transcripts
+        assert utt_ends == [True]
