@@ -190,6 +190,8 @@ class Pipeline:
                             if self._sm.state == State.INTERRUPTED:
                                 return
                             await audio_q.put(audio)
+                            if audio_q.qsize() >= 24:
+                                logger.warning("Queue pressure", qsize=audio_q.qsize())
                 # Flush remaining
                 if buffer.strip() and self._sm.state != State.INTERRUPTED:
                     clean = buffer.strip()
@@ -295,6 +297,19 @@ class Pipeline:
         task = asyncio.create_task(_extract())
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+
+    def diagnostics(self) -> dict:
+        """Return runtime diagnostics for monitoring."""
+        diag = {
+            "state": self._sm.state.value,
+            "background_tasks": len(self._background_tasks),
+            "active_timeout": self._active_timeout_task is not None,
+            "asyncio_tasks": len(asyncio.all_tasks()),
+        }
+        if self._pool is not None:
+            diag["db_pool_size"] = self._pool.get_size()
+            diag["db_pool_free"] = self._pool.get_idle_size()
+        return diag
 
     async def shutdown(self) -> None:
         """Clean shutdown of all components."""

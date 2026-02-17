@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import tracemalloc
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,6 +15,10 @@ from prot.pipeline import Pipeline
 
 setup_logging()
 logger = get_logger(__name__)
+
+if os.environ.get("PROT_TRACEMALLOC"):
+    tracemalloc.start()
+    logger.info("tracemalloc enabled")
 
 pipeline: Pipeline | None = None
 audio: AudioManager | None = None
@@ -51,3 +57,27 @@ async def health():
 @app.get("/state")
 async def state():
     return {"state": pipeline.state.state.value if pipeline else "not_started"}
+
+
+@app.get("/diagnostics")
+async def diagnostics():
+    if not pipeline:
+        return {"status": "not_started"}
+    return pipeline.diagnostics()
+
+
+@app.get("/memory")
+async def memory_stats():
+    if not tracemalloc.is_tracing():
+        return {"error": "tracemalloc not enabled. Set PROT_TRACEMALLOC=1"}
+    current, peak = tracemalloc.get_traced_memory()
+    snapshot = tracemalloc.take_snapshot()
+    top = snapshot.statistics("lineno")[:20]
+    return {
+        "current_mb": round(current / 1024 / 1024, 2),
+        "peak_mb": round(peak / 1024 / 1024, 2),
+        "top_allocations": [
+            {"file": str(s.traceback), "size_kb": round(s.size / 1024, 1)}
+            for s in top
+        ],
+    }
