@@ -1,26 +1,5 @@
 import pytest
-from prot.processing import sanitize_for_tts, ensure_complete_sentence, chunk_sentences
-
-
-class TestSanitizeForTts:
-    def test_strips_markdown_bold(self):
-        assert sanitize_for_tts("이건 **중요한** 내용이야") == "이건 중요한 내용이야"
-
-    def test_strips_markdown_headers(self):
-        assert sanitize_for_tts("# 제목\n내용") == "제목\n내용"
-
-    def test_strips_numbered_list(self):
-        assert sanitize_for_tts("1. 첫째\n2. 둘째") == "첫째\n둘째"
-
-    def test_strips_bullets(self):
-        assert sanitize_for_tts("- 항목\n• 항목") == "항목\n항목"
-
-    def test_strips_code_backticks(self):
-        assert sanitize_for_tts("이건 `코드` 임") == "이건 코드 임"
-
-    def test_passthrough_clean_text(self):
-        text = "오늘 날씨 좋다."
-        assert sanitize_for_tts(text) == text
+from prot.processing import ensure_complete_sentence, chunk_sentences, MAX_BUFFER_CHARS
 
 
 class TestEnsureCompleteSentence:
@@ -75,3 +54,17 @@ class TestChunkSentences:
         sentences, remainder = chunk_sentences("첫째. 둘째! 셋째는 아직")
         assert sentences == ["첫째.", "둘째!"]
         assert remainder == "셋째는 아직"
+
+    def test_force_flush_on_oversized_remainder(self):
+        """chunk_sentences should force-flush remainder exceeding MAX_BUFFER_CHARS."""
+        long_text = "가" * (MAX_BUFFER_CHARS + 100)
+        sentences, remainder = chunk_sentences(long_text)
+        assert len(remainder) <= MAX_BUFFER_CHARS
+        assert len(sentences) >= 1
+
+    def test_normal_remainder_not_flushed(self):
+        """Remainder under MAX_BUFFER_CHARS should be preserved."""
+        text = "완성. 미완성"
+        sentences, remainder = chunk_sentences(text)
+        assert remainder == "미완성"
+        assert sentences == ["완성."]

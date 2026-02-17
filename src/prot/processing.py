@@ -1,17 +1,9 @@
 import re
 
-_RE_MARKDOWN = re.compile(r'[*_#`~\[\](){}|>]')
-_RE_NUMBERED = re.compile(r'\d+\.\s')
-_RE_BULLETS = re.compile(r'[-•]\s')
 _RE_SENTENCE_SPLIT = re.compile(r'(?<=[.!?~])\s+')
 _RE_SENTENCE_END = re.compile(r'[.!?~]$')
 
-
-def sanitize_for_tts(text: str) -> str:
-    text = _RE_MARKDOWN.sub('', text)
-    text = _RE_NUMBERED.sub('', text)
-    text = _RE_BULLETS.sub('', text)
-    return text.strip()
+MAX_BUFFER_CHARS = 2000
 
 
 def ensure_complete_sentence(text: str) -> str:
@@ -37,4 +29,7 @@ def chunk_sentences(text: str) -> tuple[list[str], str]:
         return [p.strip() for p in parts if p.strip()], ""
     remainder = parts.pop().strip()
     complete = [p.strip() for p in parts if p.strip()]
+    if len(remainder) > MAX_BUFFER_CHARS:
+        complete.append(remainder)
+        remainder = ""
     return complete, remainder

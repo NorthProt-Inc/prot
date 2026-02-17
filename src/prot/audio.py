@@ -33,13 +33,14 @@ class AudioManager:
         self._stream.start_stream()
 
     def stop(self) -> None:
-        """Stop and close mic stream."""
+        """Stop and close mic stream and terminate PyAudio."""
         if self._stream:
             try:
                 self._stream.stop_stream()
                 self._stream.close()
             finally:
                 self._stream = None
+        self._pa.terminate()
 
     def _audio_callback(
         self,
@@ -53,6 +54,3 @@ class AudioManager:
             self._on_audio(in_data)
         return (None, pyaudio.paContinue)
 
-    def __del__(self) -> None:
-        self.stop()
-        self._pa.terminate()

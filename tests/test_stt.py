@@ -5,7 +5,7 @@ import base64
 import json
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from prot.stt import STTClient
 
@@ -212,3 +212,20 @@ class TestSTTClient:
 
         assert ("타임스탬프 테스트", True) in transcripts
         assert utt_ends == [True]
+
+    async def test_send_audio_disconnect_failure_clears_recv_task(self):
+        """If disconnect() raises in send_audio fallback, _recv_task should be cleared."""
+        client = STTClient(api_key="test")
+        mock_ws = AsyncMock()
+        mock_ws.send = AsyncMock(side_effect=Exception("send failed"))
+        client._ws = mock_ws
+        mock_task = MagicMock()
+        client._recv_task = mock_task
+
+        # Make disconnect itself raise
+        original_disconnect = client.disconnect
+        client.disconnect = AsyncMock(side_effect=Exception("disconnect failed"))
+
+        await client.send_audio(b"\x00" * 100)
+        assert client._ws is None
+        assert client._recv_task is None

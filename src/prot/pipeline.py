@@ -300,6 +300,10 @@ class Pipeline:
         """Clean shutdown of all components."""
         if self._active_timeout_task is not None:
             self._active_timeout_task.cancel()
+            try:
+                await self._active_timeout_task
+            except (asyncio.CancelledError, Exception):
+                pass
             self._active_timeout_task = None
 
         try:

@@ -75,9 +75,9 @@ class TestAudioManager:
             mock_stream.start_stream.assert_called_once()
             assert mgr._stream is mock_stream
 
-    def test_del_terminates_pyaudio(self):
+    def test_stop_terminates_pyaudio(self):
         with patch("prot.audio.pyaudio.PyAudio") as mock_pa_cls:
             mock_pa = mock_pa_cls.return_value
             mgr = AudioManager(device_index=11)
-            mgr.__del__()
+            mgr.stop()
             mock_pa.terminate.assert_called_once()

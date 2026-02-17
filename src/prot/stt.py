@@ -82,6 +82,7 @@ class STTClient:
                 await self.disconnect()
             except Exception:
                 self._ws = None
+                self._recv_task = None
 
     async def disconnect(self) -> None:
         """Close WebSocket connection."""
