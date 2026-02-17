@@ -272,7 +272,7 @@ class Pipeline:
                 await self._stt.disconnect()
                 self._vad.reset()
 
-        self._active_timeout_task = asyncio.ensure_future(_timeout())
+        self._active_timeout_task = asyncio.create_task(_timeout())
 
     def _extract_memories_bg(self) -> None:
         """Background task to extract and save memories — tracked for shutdown cleanup."""
