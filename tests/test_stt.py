@@ -155,12 +155,27 @@ class TestSTTClient:
             await client.send_audio(b"\x00" * 512)
             client.disconnect.assert_awaited_once()
 
-    async def test_connect_reconnects_if_already_connected(self):
-        mock_connect = AsyncMock(side_effect=[_make_ws_mock(), _make_ws_mock()])
+    async def test_connect_reuses_when_already_connected(self):
+        ws = _make_ws_mock()
+        ws.open = True
+        mock_connect = AsyncMock(return_value=ws)
         with patch("prot.stt.websockets.connect", mock_connect):
             client = STTClient(api_key="test")
             await client.connect()
-            await client.connect()  # should disconnect first, then reconnect
+            await client.connect()  # should reuse, not reconnect
+            assert mock_connect.call_count == 1
+            await client.disconnect()
+
+    async def test_connect_reconnects_when_ws_closed(self):
+        ws1 = _make_ws_mock()
+        ws1.open = False
+        ws2 = _make_ws_mock()
+        mock_connect = AsyncMock(side_effect=[ws1, ws2])
+        with patch("prot.stt.websockets.connect", mock_connect):
+            client = STTClient(api_key="test")
+            await client.connect()
+            # ws1.open is False, so reconnect should happen
+            await client.connect()
             assert mock_connect.call_count == 2
 
     async def test_connect_failure_closes_ws_and_sets_none(self):
@@ -268,6 +283,19 @@ class TestSTTClient:
             await client.connect()
             assert client._ws is None
             assert client.is_connected is False
+
+    async def test_connect_reuses_open_websocket(self):
+        """connect() should reuse existing open WebSocket instead of reconnecting."""
+        client = STTClient(api_key="test")
+        mock_ws = AsyncMock()
+        mock_ws.open = True
+        client._ws = mock_ws
+        client._recv_task = MagicMock()
+        client._recv_task.done.return_value = False
+
+        with patch("prot.stt.websockets.connect") as mock_connect:
+            await client.connect()
+            mock_connect.assert_not_called()
 
     async def test_send_audio_disconnect_failure_clears_recv_task(self):
         """If disconnect() raises in send_audio fallback, _recv_task should be cleared."""
