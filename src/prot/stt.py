@@ -32,6 +32,8 @@ class STTClient:
         self._on_utterance_end = on_utterance_end
         self._ws: websockets.ClientConnection | None = None
         self._recv_task: asyncio.Task | None = None
+        self._msg_prefix = '{"message_type":"input_audio_chunk","audio_base_64":"'
+        self._msg_suffix = f'","commit":false,"sample_rate":{settings.sample_rate}}}'
 
     @property
     def is_connected(self) -> bool:
@@ -100,12 +102,7 @@ class STTClient:
         if self._ws is None:
             return
         try:
-            msg = json.dumps({
-                "message_type": "input_audio_chunk",
-                "audio_base_64": base64.b64encode(data).decode(),
-                "commit": False,
-                "sample_rate": settings.sample_rate,
-            })
+            msg = self._msg_prefix + base64.b64encode(data).decode() + self._msg_suffix
             await self._ws.send(msg)
         except Exception:
             logger.warning("Send failed, disconnecting")

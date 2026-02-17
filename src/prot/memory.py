@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from anthropic import AsyncAnthropic
@@ -132,15 +133,18 @@ class MemoryExtractor:
             parts.append(text)
             return True
 
-        # 1. Entity semantic search + neighbor traversal
+        # 1. Entity semantic search + neighbor traversal (concurrent)
         entities = await self._store.search_entities_semantic(
             query_embedding=query_embedding, top_k=5,
         )
-        for entity in entities:
+        neighbor_lists = await asyncio.gather(*(
+            self._store.get_entity_neighbors(entity["id"], max_depth=1)
+            for entity in entities
+        ))
+        for entity, neighbors in zip(entities, neighbor_lists):
             line = f"- {entity['name']} ({entity['entity_type']}): {entity['description']}"
             if not _add(line):
                 break
-            neighbors = await self._store.get_entity_neighbors(entity["id"], max_depth=1)
             for n in neighbors[:3]:
                 nline = f"  > {n['name']}: {n['description']}"
                 if not _add(nline):

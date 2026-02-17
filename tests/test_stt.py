@@ -313,3 +313,25 @@ class TestSTTClient:
         await client.send_audio(b"\x00" * 100)
         assert client._ws is None
         assert client._recv_task is None
+
+    async def test_send_audio_uses_precomputed_template(self):
+        """Verify send_audio does not call json.dumps on the hot path."""
+        ws = _make_ws_mock()
+        with patch("prot.stt.websockets.connect", AsyncMock(return_value=ws)):
+            client = STTClient(api_key="test")
+            await client.connect()
+
+            with patch("prot.stt.json.dumps") as mock_dumps:
+                await client.send_audio(b"\x00" * 512)
+                mock_dumps.assert_not_called()
+
+            # Verify the sent message is still valid JSON with correct fields
+            call_args = ws.send.call_args[0][0]
+            msg = json.loads(call_args)
+            assert msg["message_type"] == "input_audio_chunk"
+            assert msg["sample_rate"] == 16000
+            assert msg["commit"] is False
+            raw = base64.b64decode(msg["audio_base_64"])
+            assert raw == b"\x00" * 512
+
+            await client.disconnect()

@@ -6,12 +6,6 @@ _RE_SENTENCE_END = re.compile(r'[.!?~]$')
 MAX_BUFFER_CHARS = 2000
 
 
-def ensure_complete_sentence(text: str) -> str:
-    for i in range(len(text) - 1, -1, -1):
-        if text[i] in '.!?~':
-            return text[:i + 1]
-    return text
-
 
 def chunk_sentences(text: str) -> tuple[list[str], str]:
     """Split text into complete sentences and a trailing remainder.

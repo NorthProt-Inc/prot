@@ -244,3 +244,44 @@ class TestMemoryExtractor:
         # Should not include all 20 entities due to token budget
         lines = [l for l in text.split("\n") if l.strip()]
         assert len(lines) < 20
+
+    async def test_pre_load_context_fetches_neighbors_concurrently(self):
+        """Verify neighbor queries run concurrently, not sequentially."""
+        import asyncio
+
+        call_order = []
+
+        async def mock_get_neighbors(entity_id, max_depth=1):
+            call_order.append(("start", entity_id))
+            await asyncio.sleep(0.01)  # simulate DB latency
+            call_order.append(("end", entity_id))
+            return [{"name": f"Neighbor-of-{entity_id}", "description": "neighbor"}]
+
+        mock_store = AsyncMock()
+        mock_store.search_entities_semantic.return_value = [
+            {"id": f"e{i}", "name": f"Entity{i}", "entity_type": "person",
+             "description": f"Desc {i}"}
+            for i in range(3)
+        ]
+        mock_store.get_entity_neighbors = mock_get_neighbors
+        mock_store.search_communities.return_value = []
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_query.return_value = [0.1] * 1024
+
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=mock_store, embedder=mock_embedder
+        )
+        text = await extractor.pre_load_context("test query")
+
+        # If concurrent: all "start" before any "end"
+        # If sequential: start/end/start/end/start/end
+        starts = [i for i, (action, _) in enumerate(call_order) if action == "start"]
+        ends = [i for i, (action, _) in enumerate(call_order) if action == "end"]
+        # All starts should come before all ends
+        assert max(starts) < min(ends), (
+            f"Neighbor queries appear sequential: {call_order}"
+        )
+
+        # Results should still be in output
+        assert "Entity0" in text
+        assert "Neighbor-of-e0" in text

@@ -1,22 +1,5 @@
 import pytest
-from prot.processing import ensure_complete_sentence, chunk_sentences, MAX_BUFFER_CHARS
-
-
-class TestEnsureCompleteSentence:
-    def test_truncates_at_last_period(self):
-        assert ensure_complete_sentence("안녕하세요. 오늘은") == "안녕하세요."
-
-    def test_truncates_at_question_mark(self):
-        assert ensure_complete_sentence("뭐해? 나는") == "뭐해?"
-
-    def test_truncates_at_exclamation(self):
-        assert ensure_complete_sentence("좋아! 그러면") == "좋아!"
-
-    def test_returns_full_if_complete(self):
-        assert ensure_complete_sentence("완전한 문장이야.") == "완전한 문장이야."
-
-    def test_returns_text_if_no_punctuation(self):
-        assert ensure_complete_sentence("문장부호없음") == "문장부호없음"
+from prot.processing import chunk_sentences, MAX_BUFFER_CHARS
 
 
 class TestChunkSentences:
