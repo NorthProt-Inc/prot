@@ -9,7 +9,7 @@ class VADProcessor:
         threshold: float = 0.5,
         sample_rate: int = 16000,
         speech_count_threshold: int = 3,
-        chunk_bytes: int = 512,
+        chunk_bytes: int = 1024,
     ):
         self._model, _ = torch.hub.load(
             "snakers4/silero-vad", "silero_vad", trust_repo=True
@@ -32,14 +32,15 @@ class VADProcessor:
 
     def is_speech(self, pcm_bytes: bytes) -> bool:
         """Check if PCM audio chunk contains speech."""
-        raw = torch.frombuffer(pcm_bytes, dtype=torch.int16)
-        n = raw.numel()
-        if n > self._float_buf.numel():
-            self._float_buf = torch.empty(n, dtype=torch.float32)
-        buf = self._float_buf[:n]
-        buf.copy_(raw)
-        buf.div_(32768.0)
-        prob = self._model(buf, self._sample_rate).item()
+        with torch.inference_mode():
+            raw = torch.frombuffer(bytearray(pcm_bytes), dtype=torch.int16)
+            n = raw.numel()
+            if n > self._float_buf.numel():
+                self._float_buf = torch.empty(n, dtype=torch.float32)
+            buf = self._float_buf[:n]
+            buf.copy_(raw)
+            buf.div_(32768.0)
+            prob = self._model(buf, self._sample_rate).item()
 
         if prob >= self._threshold:
             self._speech_count += 1

@@ -23,6 +23,10 @@ class AsyncVoyageEmbedder:
         self._max_concurrent = max_concurrent
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.close()
+
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple texts (input_type='document'). Auto-batches over MAX_BATCH."""
         all_vectors: list[list[float]] = []

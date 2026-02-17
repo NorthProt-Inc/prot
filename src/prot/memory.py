@@ -51,6 +51,10 @@ class MemoryExtractor:
         self._store = store
         self._embedder = embedder
 
+    async def close(self) -> None:
+        """Close the underlying Anthropic client."""
+        await self._llm.close()
+
     async def extract_from_conversation(self, messages: list[dict]) -> dict:
         """Use Haiku 4.5 to extract entities and relationships from conversation."""
         logger.info("Extracting", messages=len(messages))

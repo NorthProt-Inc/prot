@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 
 
 class TestVADProcessor:
@@ -107,3 +107,29 @@ class TestVADProcessor:
         for _ in range(4):
             assert vad.is_speech(pcm) is False
         assert vad.is_speech(pcm) is True
+
+    def test_is_speech_uses_inference_mode(self):
+        """is_speech() must run under torch.inference_mode() to prevent autograd graph leaks."""
+        from prot.vad import VADProcessor
+        import torch
+
+        vad = VADProcessor()
+        audio = np.zeros(512, dtype=np.int16)
+
+        with patch("prot.vad.torch.inference_mode") as mock_inf:
+            ctx = MagicMock()
+            mock_inf.return_value = ctx
+            ctx.__enter__ = MagicMock(return_value=None)
+            ctx.__exit__ = MagicMock(return_value=False)
+            vad.is_speech(audio.tobytes())
+            mock_inf.assert_called_once()
+            ctx.__enter__.assert_called_once()
+            ctx.__exit__.assert_called_once()
+
+    def test_default_chunk_bytes_is_1024(self):
+        """Default chunk_bytes should be 1024 (512 samples × 2 bytes)."""
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor()
+        # float_buf should be 1024 // 2 = 512 samples
+        assert vad._float_buf.numel() == 512

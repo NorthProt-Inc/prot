@@ -301,6 +301,39 @@ class TestShutdown:
         await p.shutdown()
         mock_pool.close.assert_awaited_once()
 
+    async def test_closes_tts_client(self):
+        p = _make_pipeline()
+        p._tts.close = AsyncMock()
+
+        await p.shutdown()
+        p._tts.close.assert_awaited_once()
+
+    async def test_closes_memory_client(self):
+        p = _make_pipeline()
+        mock_memory = AsyncMock()
+        mock_memory.close = AsyncMock()
+        p._memory = mock_memory
+
+        await p.shutdown()
+        mock_memory.close.assert_awaited_once()
+
+    async def test_closes_embedder_client(self):
+        p = _make_pipeline()
+        mock_embedder = AsyncMock()
+        mock_embedder.close = AsyncMock()
+        p._embedder = mock_embedder
+
+        await p.shutdown()
+        mock_embedder.close.assert_awaited_once()
+
+    async def test_skips_memory_close_when_none(self):
+        p = _make_pipeline()
+        p._tts.close = AsyncMock()
+        p._memory = None
+        p._embedder = None
+
+        await p.shutdown()  # should not raise
+
 
 class TestActiveTimeout:
     """_start_active_timeout() — schedules 30s timer to return to IDLE."""

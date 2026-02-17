@@ -46,6 +46,10 @@ class TTSClient:
         except Exception:
             logger.debug("TTS warm failed", exc_info=True)
 
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.close()
+
     def flush(self) -> None:
         """Cancel current TTS stream."""
         self._cancelled = True

@@ -420,6 +420,11 @@ class Pipeline:
             logger.debug("LLM close error", exc_info=True)
 
         try:
+            await self._tts.close()
+        except Exception:
+            logger.debug("TTS close error", exc_info=True)
+
+        try:
             await self._stt.disconnect()
         except Exception:
             logger.debug("STT disconnect error", exc_info=True)
@@ -428,6 +433,18 @@ class Pipeline:
             await self._player.kill()
         except Exception:
             logger.debug("Player kill error", exc_info=True)
+
+        if self._memory is not None:
+            try:
+                await self._memory.close()
+            except Exception:
+                logger.debug("Memory close error", exc_info=True)
+
+        if self._embedder is not None:
+            try:
+                await self._embedder.close()
+            except Exception:
+                logger.debug("Embedder close error", exc_info=True)
 
         # Cancel background tasks before closing pool
         for task in self._background_tasks:
