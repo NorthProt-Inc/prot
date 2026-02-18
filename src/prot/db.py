@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import asyncpg
+from pgvector.asyncpg import register_vector
 
 from prot.config import settings
 from prot.log import get_logger
@@ -25,6 +26,7 @@ async def init_pool(dsn: str | None = None) -> asyncpg.Pool:
         dsn=dsn or settings.database_url,
         min_size=settings.db_pool_min,
         max_size=settings.db_pool_max,
+        init=register_vector,
     )
     logger.info("Pool created", min=settings.db_pool_min, max=settings.db_pool_max)
     return _pool

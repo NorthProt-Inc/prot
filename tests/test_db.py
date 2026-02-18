@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from pgvector.asyncpg import register_vector
+
 import prot.db as db_module
 from prot.db import SCHEMA_PATH, close_pool, execute_schema, get_pool, init_pool
 
@@ -57,9 +59,19 @@ class TestInitPool:
             dsn="postgresql://test:test@localhost/test",
             min_size=2,
             max_size=10,
+            init=register_vector,
         )
         assert result is mock_pool
         assert db_module._pool is mock_pool
+
+    async def test_init_pool_registers_vector_codec(self) -> None:
+        mock_pool = MagicMock()
+        mock_create = AsyncMock(return_value=mock_pool)
+        with patch("prot.db.asyncpg.create_pool", mock_create):
+            await init_pool(dsn="postgresql://test:test@localhost/test")
+
+        call_kwargs = mock_create.call_args.kwargs
+        assert call_kwargs["init"] is register_vector
 
     async def test_init_pool_raises_when_already_initialized(self) -> None:
         db_module._pool = MagicMock()
