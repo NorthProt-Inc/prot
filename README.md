@@ -25,7 +25,7 @@ graph TD
     MIC[Microphone<br/>PyAudio] --> VAD[Silero VAD]
     VAD --> SM[State Machine]
     SM --> STT[ElevenLabs Scribe v2<br/>WebSocket Realtime]
-    STT --> LLM[Claude Opus 4.6<br/>Adaptive Thinking]
+    STT --> LLM[Claude Sonnet 4.6<br/>Adaptive Thinking]
     LLM --> TTS[ElevenLabs TTS<br/>Streaming]
     TTS --> PLAY[paplay<br/>PulseAudio]
 
@@ -144,9 +144,10 @@ systemctl --user enable --now prot
 | `HASS_URL` | No | `http://localhost:8123` | Home Assistant URL |
 | `HASS_TOKEN` | No | — | Home Assistant long-lived access token |
 | `MIC_DEVICE_INDEX` | No | (system default) | PyAudio input device index |
-| `CLAUDE_MODEL` | No | `claude-opus-4-6` | Claude model ID |
-| `CLAUDE_MAX_TOKENS` | No | `1500` | Claude max output tokens |
-| `CLAUDE_EFFORT` | No | `medium` | Claude thinking effort (low/medium/high) |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude model ID |
+| `CLAUDE_MAX_TOKENS` | No | `4096` | Claude max output tokens |
+| `CLAUDE_EFFORT` | No | `high` | Claude thinking effort (low/medium/high) |
+| `CONTEXT_MAX_TURNS` | No | `10` | Sliding window size (recent turns sent to LLM) |
 | `VAD_THRESHOLD` | No | `0.5` | VAD speech detection threshold |
 | `VAD_THRESHOLD_SPEAKING` | No | `0.8` | VAD threshold during SPEAKING (barge-in) |
 | `ACTIVE_TIMEOUT` | No | `30` | Seconds before ACTIVE → IDLE timeout |

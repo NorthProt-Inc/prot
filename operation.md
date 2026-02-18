@@ -52,9 +52,10 @@ cp .env.example .env
 | 변수 | 필수 | 기본값 | 설명 |
 |------|------|--------|------|
 | `STT_LANGUAGE` | No | `ko` | STT 인식 언어 |
-| `CLAUDE_MODEL` | No | `claude-opus-4-6` | Claude 모델 ID |
-| `CLAUDE_MAX_TOKENS` | No | `1500` | Claude 최대 출력 토큰 |
-| `CLAUDE_EFFORT` | No | `medium` | Claude thinking effort (low/medium/high) |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude 모델 ID |
+| `CLAUDE_MAX_TOKENS` | No | `4096` | Claude 최대 출력 토큰 |
+| `CLAUDE_EFFORT` | No | `high` | Claude thinking effort (low/medium/high) |
+| `CONTEXT_MAX_TURNS` | No | `10` | 슬라이딩 윈도우 크기 (최근 N턴만 LLM에 전달) |
 | `ELEVENLABS_VOICE_ID` | No | `Fahco4VZzobUeiPqni1S` | ElevenLabs voice ID |
 | `ELEVENLABS_MODEL` | No | `eleven_multilingual_v2` | ElevenLabs TTS 모델 |
 | `ELEVENLABS_OUTPUT_FORMAT` | No | `pcm_24000` | TTS 출력 오디오 포맷 |

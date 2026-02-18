@@ -27,11 +27,11 @@ src/prot/
   audio.py         # PyAudio microphone capture
   vad.py           # Silero VAD speech detection
   stt.py           # ElevenLabs Scribe v2 (WebSocket realtime STT)
-  llm.py           # Claude API — streaming responses + tool-use loop (max 3 rounds)
+  llm.py           # Claude API (Sonnet 4.6) — streaming responses + tool-use loop (max 3 rounds)
   tts.py           # ElevenLabs TTS streaming
   playback.py      # paplay (PulseAudio) audio output with producer-consumer queue
   processing.py    # Orchestrates LLM→TTS→playback per utterance
-  context.py       # 3-block system prompt builder (persona, RAG context, dynamic)
+  context.py       # 3-block system prompt builder + sliding window context (last N turns)
   persona.py       # Axel persona definition (loaded from docs/axel.json)
   memory.py        # Background memory extraction + RAG context retrieval
   graphrag.py      # Entity/relationship extraction via Haiku 4.5
@@ -58,9 +58,13 @@ src/prot/
 - **Tool loop**: LLM supports up to 3 tool-use rounds per response (Home Assistant, web search).
 - **Prompt caching**: System prompt uses 3-block layout optimized for Anthropic cache hits.
   Block order matters — persona (static) → RAG context (semi-static) → dynamic.
+- **Sliding window**: `get_recent_messages(max_turns)` returns last N turns for LLM calls.
+  Full history preserved via `get_messages()` for session logging and memory extraction.
+  Window boundary skips orphaned tool_result messages to maintain valid conversation flow.
 - **Memory extraction**: Runs in background after each exchange. Uses Haiku 4.5 for entity/relationship extraction.
   Community detection triggers every 5 extractions via CommunityDetector (Louvain clustering).
 - **DB optional**: App works without PostgreSQL — memory/RAG features gracefully degrade.
+- **GA API**: Uses `messages.stream()` (not beta). Adaptive thinking + effort are GA on Sonnet 4.6.
 
 ## Testing
 

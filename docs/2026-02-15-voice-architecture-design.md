@@ -24,7 +24,7 @@ prot.service (FastAPI)
 |-----------|--------|-----------|
 | Framework | FastAPI | Async-first, single process |
 | STT | ElevenLabs Scribe v2 Realtime (WebSocket) | VAD-based commit, Korean support |
-| LLM | Claude Opus 4.6 (`claude-opus-4-6`) | Adaptive thinking, effort parameter, prompt caching, compact API |
+| LLM | Claude Sonnet 4.6 (`claude-sonnet-4-6`) | Adaptive thinking, effort parameter, prompt caching, GA API |
 | TTS | ElevenLabs Multilingual v2 (`eleven_multilingual_v2`) | Quality-first, Korean support |
 | Search | Anthropic `web_search_20250305` | Server-side, no MCP overhead |
 | IoT | Home Assistant (native tool, REST API) | Direct FastAPI execution, no MCP |
