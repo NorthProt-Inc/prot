@@ -15,7 +15,7 @@
 
 ```bash
 uv sync              # 프로덕션 의존성
-uv sync --group dev  # 개발 의존성 포함
+uv sync --extra dev  # 개발 의존성 포함 (pytest, pytest-asyncio, pytest-cov)
 ```
 
 ---
@@ -30,23 +30,65 @@ cp .env.example .env
 
 `.env` 파일을 편집하여 API 키를 설정한다.
 
+#### API Keys (필수)
+
 | 변수 | 필수 | 기본값 | 설명 |
-| ------ | ------ | -------- | ------ |
+|------|------|--------|------|
 | `ANTHROPIC_API_KEY` | Yes | — | Anthropic API 키 (Claude) |
 | `ELEVENLABS_API_KEY` | Yes | — | ElevenLabs API 키 (STT + TTS) |
-| `ELEVENLABS_VOICE_ID` | No | `Fahco4VZzobUeiPqni1S` | ElevenLabs voice ID |
-| `VOYAGE_API_KEY` | No | — | Voyage AI 임베딩 API 키 |
-| `DATABASE_URL` | No | `postgresql://prot:prot@localhost:5432/prot` | PostgreSQL 연결 문자열 |
-| `HASS_URL` | No | `http://localhost:8123` | Home Assistant URL |
-| `HASS_TOKEN` | No | — | Home Assistant long-lived access token |
-| `MIC_DEVICE_INDEX` | No | `11` | PyAudio 입력 장치 인덱스 |
-| `LOG_LEVEL` | No | `INFO` | 로그 레벨 (DEBUG, INFO, WARNING, ERROR) |
-| `ACTIVE_TIMEOUT` | No | `30` | ACTIVE 상태 유지 시간 (초) |
-| `CLAUDE_MODEL` | No | `claude-opus-4-6` | Claude 모델 ID |
-| `CLAUDE_MAX_TOKENS` | No | `1500` | Claude 최대 출력 토큰 |
-| `CLAUDE_EFFORT` | No | `medium` | Claude thinking effort |
+
+#### Audio / VAD
+
+| 변수 | 필수 | 기본값 | 설명 |
+|------|------|--------|------|
+| `MIC_DEVICE_INDEX` | No | (system default) | PyAudio 입력 장치 인덱스 |
+| `SAMPLE_RATE` | No | `16000` | 오디오 샘플레이트 (Hz) |
+| `CHUNK_SIZE` | No | `512` | 오디오 청크 크기 |
 | `VAD_THRESHOLD` | No | `0.5` | VAD 음성 감지 임계값 (IDLE/ACTIVE) |
 | `VAD_THRESHOLD_SPEAKING` | No | `0.8` | VAD 임계값 (SPEAKING 상태, barge-in) |
+
+#### STT / LLM / TTS
+
+| 변수 | 필수 | 기본값 | 설명 |
+|------|------|--------|------|
+| `STT_LANGUAGE` | No | `ko` | STT 인식 언어 |
+| `CLAUDE_MODEL` | No | `claude-opus-4-6` | Claude 모델 ID |
+| `CLAUDE_MAX_TOKENS` | No | `1500` | Claude 최대 출력 토큰 |
+| `CLAUDE_EFFORT` | No | `medium` | Claude thinking effort (low/medium/high) |
+| `ELEVENLABS_VOICE_ID` | No | `Fahco4VZzobUeiPqni1S` | ElevenLabs voice ID |
+| `ELEVENLABS_MODEL` | No | `eleven_multilingual_v2` | ElevenLabs TTS 모델 |
+| `ELEVENLABS_OUTPUT_FORMAT` | No | `pcm_24000` | TTS 출력 오디오 포맷 |
+
+#### Home Assistant
+
+| 변수 | 필수 | 기본값 | 설명 |
+|------|------|--------|------|
+| `HASS_URL` | No | `http://localhost:8123` | Home Assistant URL |
+| `HASS_TOKEN` | No | — | Home Assistant long-lived access token |
+
+#### Database / Memory
+
+| 변수 | 필수 | 기본값 | 설명 |
+|------|------|--------|------|
+| `DATABASE_URL` | No | `postgresql://prot:prot@localhost:5432/prot` | PostgreSQL 연결 문자열 |
+| `DB_POOL_MIN` | No | `2` | DB 커넥션 풀 최소 크기 |
+| `DB_POOL_MAX` | No | `10` | DB 커넥션 풀 최대 크기 |
+| `DB_EXPORT_DIR` | No | `data/db` | DB 종료 시 CSV 내보내기 디렉토리 |
+| `VOYAGE_API_KEY` | No | — | Voyage AI 임베딩 API 키 |
+| `VOYAGE_MODEL` | No | `voyage-4-lite` | Voyage 임베딩 모델 |
+| `VOYAGE_DIMENSION` | No | `1024` | 임베딩 벡터 차원 |
+| `MEMORY_EXTRACTION_MODEL` | No | `claude-haiku-4-5-20251001` | Memory 추출용 모델 |
+| `RAG_CONTEXT_TARGET_TOKENS` | No | `3000` | RAG 컨텍스트 목표 토큰 수 |
+| `RAG_TOP_K` | No | `10` | RAG 검색 상위 결과 수 |
+| `COMMUNITY_REBUILD_INTERVAL` | No | `5` | Community detection 재구축 간격 (추출 횟수) |
+| `COMMUNITY_MIN_ENTITIES` | No | `5` | Community detection 최소 엔티티 수 |
+
+#### Logging / Timers
+
+| 변수 | 필수 | 기본값 | 설명 |
+|------|------|--------|------|
+| `LOG_LEVEL` | No | `INFO` | 로그 레벨 (DEBUG, INFO, WARNING, ERROR) |
+| `ACTIVE_TIMEOUT` | No | `30` | ACTIVE 상태 유지 시간 (초) |
 
 ### 데이터베이스 설정 (선택)
 
@@ -82,6 +124,24 @@ pa.terminate()
 
 `MIC_DEVICE_INDEX`를 원하는 장치 번호로 설정한다.
 
+### 출력 볼륨 조절
+
+이어폰 사용 시 청각 보호를 위해 볼륨을 낮춰 설정한다.
+
+```bash
+# 현재 볼륨 확인
+pactl get-sink-volume @DEFAULT_SINK@
+
+# 볼륨 설정 (이어폰 권장: 20~30%)
+pactl set-sink-volume @DEFAULT_SINK@ 25%
+
+# 뮤트 토글
+pactl set-sink-mute @DEFAULT_SINK@ toggle
+
+# 출력 장치 목록 및 활성 포트 확인
+pactl list sinks | grep -E "Name:|Description:|Active Port:|State:"
+```
+
 ---
 
 ## 실행
@@ -89,8 +149,14 @@ pa.terminate()
 ### 개발 모드
 
 ```bash
+# Dev launcher — 기존 포트 프로세스 자동 정리 후 시작
+./scripts/run.sh
+
+# 또는 수동 실행
 uv run uvicorn prot.app:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+`scripts/run.sh`는 지정된 포트(기본 8000)에 남아있는 프로세스를 자동으로 종료한 뒤 uvicorn을 실행한다. `PORT` 환경변수로 포트를 변경할 수 있다.
 
 ### 프로덕션 모드
 
@@ -173,6 +239,14 @@ IDLE → LISTENING → PROCESSING → SPEAKING → ACTIVE → IDLE
 - **ACTIVE**: 응답 완료 후 후속 발화 대기 (30초 timeout).
 - **INTERRUPTED**: 사용자가 말하는 중 끼어들었을 때. STT 재연결 후 LISTENING으로.
 
+### DB 종료 시 CSV 내보내기
+
+애플리케이션 종료(shutdown) 시 `DB_EXPORT_DIR` (기본: `data/db`)로 테이블을 CSV로 자동 내보낸다.
+
+### 대화 로그
+
+대화 내역은 `data/conversations/` 에 날짜별 JSONL 파일(`YYYY-MM-DD.jsonl`)로 기록된다.
+
 ### 주요 모니터링 포인트
 
 1. `/health` 엔드포인트로 서비스 생존 확인
@@ -197,7 +271,7 @@ pg_dump prot > prot_backup_$(date +%Y%m%d).sql
 ## 트러블슈팅 체크리스트
 
 | 증상 | 확인 사항 |
-| ------ | ----------- |
+|------|-----------|
 | 서비스 시작 안 됨 | `.env` 파일에 `ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY` 설정 확인 |
 | 마이크 입력 없음 | `MIC_DEVICE_INDEX` 유효성 확인, PulseAudio 실행 여부 |
 | 음성 인식 안 됨 | ElevenLabs API 키 유효성, 네트워크 연결, `VAD_THRESHOLD` 값 조정 |
@@ -207,3 +281,6 @@ pg_dump prot > prot_backup_$(date +%Y%m%d).sql
 | Barge-in 불안정 | `VAD_THRESHOLD_SPEAKING` 값 조정 (높을수록 barge-in 어려움) |
 | 응답 지연 | `CLAUDE_EFFORT` 값 확인 (`low`/`medium`/`high`), 네트워크 상태 |
 | `SEGV` / crash | `journalctl --user -u prot` 로그 확인, PyAudio 장치 충돌 가능성 |
+| 포트 충돌 | `./scripts/run.sh` 사용 (자동 정리) 또는 `lsof -ti :8000` 수동 확인 |
+
+  npx -p @mermaid-js/mermaid-cli mmdc -i input.mmd -o output.png -s 2 -p docs/puppeteer.json
