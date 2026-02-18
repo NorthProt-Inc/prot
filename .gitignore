@@ -27,6 +27,9 @@ logs/
 # Worktrees
 .worktrees/
 
+# Data (conversations + DB exports)
+data/
+
 # Reference / legacy projects
 .reference/
 axel/

@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://prot:prot@localhost:5432/prot"
     db_pool_min: int = 2
     db_pool_max: int = 10
+    db_export_dir: str = "data/db"
 
     # Embeddings
     voyage_api_key: str = ""

@@ -491,6 +491,14 @@ class Pipeline:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
 
+        # Export DB tables to CSV
+        if self._pool is not None:
+            try:
+                from prot.db import export_tables
+                await export_tables(self._pool)
+            except Exception:
+                logger.debug("DB export error", exc_info=True)
+
         if self._pool is not None:
             try:
                 await self._pool.close()
