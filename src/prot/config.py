@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Embeddings
     voyage_api_key: str = ""
-    voyage_model: str = "voyage-4-lite"
+    voyage_model: str = "voyage-4"
     voyage_dimension: int = 1024
 
     # Memory
