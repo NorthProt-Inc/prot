@@ -274,6 +274,83 @@ class TestMemoryExtractor:
             assert result == {"entities": [], "relationships": []}
             mock_logger.warning.assert_called_once()
 
+class TestCommunityRebuildTrigger:
+    async def test_rebuild_triggered_on_interval(self):
+        mock_store, mock_conn = _make_store_with_conn()
+        mock_store.upsert_entity.return_value = "fake-uuid"
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_texts.return_value = [[0.1] * 1024]
+        mock_detector = AsyncMock()
+        mock_detector.rebuild.return_value = 2
+
+        extractor = MemoryExtractor(
+            anthropic_key="test",
+            store=mock_store,
+            embedder=mock_embedder,
+            community_detector=mock_detector,
+        )
+        extraction = {
+            "entities": [{"name": "Bob", "type": "person", "description": "A friend"}],
+            "relationships": [],
+        }
+
+        # Extractions 1-4: no rebuild
+        for _ in range(4):
+            await extractor.save_extraction(extraction)
+        mock_detector.rebuild.assert_not_called()
+
+        # Extraction 5: triggers rebuild
+        await extractor.save_extraction(extraction)
+        mock_detector.rebuild.assert_called_once()
+
+    async def test_rebuild_skipped_without_detector(self):
+        mock_store, mock_conn = _make_store_with_conn()
+        mock_store.upsert_entity.return_value = "fake-uuid"
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_texts.return_value = [[0.1] * 1024]
+
+        extractor = MemoryExtractor(
+            anthropic_key="test",
+            store=mock_store,
+            embedder=mock_embedder,
+        )
+        extraction = {
+            "entities": [{"name": "Bob", "type": "person", "description": "A friend"}],
+            "relationships": [],
+        }
+
+        # Should not raise even after 5+ extractions
+        for _ in range(6):
+            await extractor.save_extraction(extraction)
+
+    async def test_rebuild_failure_does_not_break_extraction(self):
+        mock_store, mock_conn = _make_store_with_conn()
+        mock_store.upsert_entity.return_value = "fake-uuid"
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_texts.return_value = [[0.1] * 1024]
+        mock_detector = AsyncMock()
+        mock_detector.rebuild.side_effect = Exception("boom")
+
+        extractor = MemoryExtractor(
+            anthropic_key="test",
+            store=mock_store,
+            embedder=mock_embedder,
+            community_detector=mock_detector,
+        )
+        extraction = {
+            "entities": [{"name": "Bob", "type": "person", "description": "A friend"}],
+            "relationships": [],
+        }
+
+        # Should not raise despite rebuild failure
+        for _ in range(5):
+            await extractor.save_extraction(extraction)
+
+        mock_detector.rebuild.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestMemoryExtractorConcurrency:
     async def test_pre_load_context_fetches_neighbors_concurrently(self):
         """Verify neighbor queries run concurrently, not sequentially."""
         import asyncio
