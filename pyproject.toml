@@ -23,6 +23,7 @@ dependencies = [
     "voyageai>=0.3",
     "numpy>=2.0",
     "pgvector>=0.3",
+    "networkx>=3.2",
 ]
 
 [project.optional-dependencies]

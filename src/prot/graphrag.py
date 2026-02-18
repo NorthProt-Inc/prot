@@ -149,6 +149,48 @@ class GraphRAGStore:
             )
             return row["id"]
 
+    async def load_graph_for_community_detection(
+        self,
+    ) -> tuple[list[dict], list[dict]]:
+        """Load all entities and relationships for community detection."""
+        async with self._pool.acquire() as conn:
+            entity_rows = await conn.fetch(
+                "SELECT id, name, entity_type, description FROM entities"
+            )
+            rel_rows = await conn.fetch(
+                "SELECT source_id, target_id, weight FROM relationships"
+            )
+            return [dict(r) for r in entity_rows], [dict(r) for r in rel_rows]
+
+    async def rebuild_communities(self, communities: list[dict]) -> None:
+        """Clear all communities and insert new ones atomically.
+
+        Each community dict: {summary, summary_embedding, entity_ids}
+        """
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("DELETE FROM communities")
+                for comm in communities:
+                    row = await conn.fetchrow(
+                        """INSERT INTO communities (level, summary, summary_embedding, entity_count)
+                        VALUES (0, $1, $2, $3) RETURNING id""",
+                        comm["summary"],
+                        comm["summary_embedding"],
+                        len(comm["entity_ids"]),
+                    )
+                    if comm["entity_ids"]:
+                        await conn.executemany(
+                            """INSERT INTO community_members (community_id, entity_id)
+                            VALUES ($1, $2) ON CONFLICT DO NOTHING""",
+                            [(row["id"], eid) for eid in comm["entity_ids"]],
+                        )
+
+    async def get_entity_count(self) -> int:
+        """Return total number of entities."""
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT count(*) AS cnt FROM entities")
+            return row["cnt"]
+
     async def get_entity_neighbors(
         self, entity_id: UUID, max_depth: int = 1
     ) -> list[dict]:

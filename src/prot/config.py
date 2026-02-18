@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str
 
     # Audio
-    mic_device_index: int = 11
+    mic_device_index: int | None = None
     sample_rate: int = 16000
     chunk_size: int = 512
 
@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     memory_extraction_model: str = "claude-haiku-4-5-20251001"
     rag_context_target_tokens: int = 3000
     rag_top_k: int = 10
+
+    # Community detection
+    community_rebuild_interval: int = 5
+    community_min_entities: int = 5
 
     # Logging
     log_level: str = "INFO"
