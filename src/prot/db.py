@@ -8,13 +8,14 @@ import asyncpg
 from pgvector.asyncpg import register_vector
 
 from prot.config import settings
-from prot.log import get_logger
+from prot.log import get_logger, logged
 
 logger = get_logger(__name__)
 
 _pool: asyncpg.Pool | None = None
 
 
+@logged(slow_ms=5000)
 async def init_pool(dsn: str | None = None) -> asyncpg.Pool:
     """Create asyncpg connection pool."""
     global _pool

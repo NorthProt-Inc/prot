@@ -6,6 +6,7 @@ Public API:
     start_turn      — Mark beginning of pipeline turn
     elapsed_ms      — Get ms since start_turn()
     reset_turn      — Clear turn timer
+    logged          — Zero-cost function tracing decorator
     StructuredLogger, SmartFormatter, PlainFormatter
 """
 
@@ -18,6 +19,7 @@ from prot.logging.structured_logger import (
 )
 from prot.logging.formatters import SmartFormatter, PlainFormatter
 from prot.logging.setup import setup_logging
+from prot.logging.tracing import logged
 
 __all__ = [
     "get_logger",
@@ -25,6 +27,7 @@ __all__ = [
     "start_turn",
     "elapsed_ms",
     "reset_turn",
+    "logged",
     "StructuredLogger",
     "SmartFormatter",
     "PlainFormatter",

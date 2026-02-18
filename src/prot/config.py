@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     # VAD
     vad_threshold: float = 0.5
     vad_threshold_speaking: float = 0.8
+    vad_prebuffer_chunks: int = 8
 
     # STT
     stt_language: str = "ko"

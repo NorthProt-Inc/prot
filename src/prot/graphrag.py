@@ -163,29 +163,26 @@ class GraphRAGStore:
     async def get_entity_neighbors(
         self, entity_id: UUID, max_depth: int = 1
     ) -> list[dict]:
-        """Get neighboring entities via relationships using recursive CTE.
-
-        The recursive step uses two UNION ALL branches instead of OR so that
-        each branch can use its respective index (source_id or target_id).
-        """
+        """Get neighboring entities via relationships using recursive CTE."""
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
                 WITH RECURSIVE neighbors AS (
-                    SELECT target_id AS id, 1 AS depth
-                    FROM relationships WHERE source_id = $1
-                    UNION
-                    SELECT source_id AS id, 1 AS depth
-                    FROM relationships WHERE target_id = $1
+                    SELECT id, 1 AS depth FROM (
+                        SELECT target_id AS id
+                        FROM relationships WHERE source_id = $1
+                        UNION
+                        SELECT source_id AS id
+                        FROM relationships WHERE target_id = $1
+                    ) base
                     UNION ALL
-                    SELECT r.target_id, n.depth + 1
+                    SELECT
+                        CASE WHEN r.source_id = n.id
+                             THEN r.target_id ELSE r.source_id END,
+                        n.depth + 1
                     FROM neighbors n
-                    JOIN relationships r ON r.source_id = n.id
-                    WHERE n.depth < $2
-                    UNION ALL
-                    SELECT r.source_id, n.depth + 1
-                    FROM neighbors n
-                    JOIN relationships r ON r.target_id = n.id
+                    JOIN relationships r
+                        ON r.source_id = n.id OR r.target_id = n.id
                     WHERE n.depth < $2
                 )
                 SELECT DISTINCT e.id, e.name, e.entity_type, e.description

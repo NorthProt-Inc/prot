@@ -8,7 +8,7 @@ from anthropic import AsyncAnthropic
 from prot.config import settings
 from prot.embeddings import AsyncVoyageEmbedder
 from prot.graphrag import GraphRAGStore
-from prot.log import get_logger
+from prot.log import get_logger, logged
 
 logger = get_logger(__name__)
 
@@ -45,6 +45,7 @@ class CommunityDetector:
         """Close the underlying Anthropic client."""
         await self._llm.close()
 
+    @logged(slow_ms=5000)
     async def rebuild(self) -> int:
         """Full community rebuild: detect, summarize, embed, save.
 

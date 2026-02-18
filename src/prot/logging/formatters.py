@@ -23,23 +23,35 @@ class SmartFormatter(logging.Formatter):
         level_color = LEVEL_COLORS.get(record.levelname, "")
 
         extra_data: dict = getattr(record, "extra_data", {})
+
+        # Extract trace metadata (pop to keep out of k=v output)
+        trace_depth = extra_data.pop("_depth", None)
+        extra_data.pop("_trace_dir", None)
+        trace_elapsed = extra_data.pop("_elapsed", None)
+
         kv_parts = [f"{k}={v}" for k, v in extra_data.items()]
 
-        elapsed = getattr(record, "elapsed_ms", None)
-        if elapsed is not None:
-            if elapsed >= 1000:
-                kv_parts.append(f"+{elapsed / 1000:.1f}s")
-            else:
-                kv_parts.append(f"+{elapsed}ms")
+        if trace_elapsed:
+            kv_parts.append(trace_elapsed)
+        else:
+            elapsed = getattr(record, "elapsed_ms", None)
+            if elapsed is not None:
+                if elapsed >= 1000:
+                    kv_parts.append(f"+{elapsed / 1000:.1f}s")
+                else:
+                    kv_parts.append(f"+{elapsed}ms")
 
         kv_str = f" {DIM}| {' '.join(kv_parts)}{RESET}" if kv_parts else ""
         msg = record.getMessage()
+
+        # Add call-depth indent for trace messages
+        indent = f"{'| ' * trace_depth}" if trace_depth is not None else ""
 
         line = (
             f"{DIM}{timestamp}{RESET}  "
             f"{level_color}{record.levelname:<5}{RESET} "
             f"[{color}{abbrev}{RESET}|{color}{mod:<10}{RESET}] "
-            f"{msg}{kv_str}"
+            f"{indent}{msg}{kv_str}"
         )
 
         if record.exc_info and not record.exc_text:
@@ -58,19 +70,31 @@ class PlainFormatter(logging.Formatter):
 
         mod = module_key(record.name)
         extra_data: dict = getattr(record, "extra_data", {})
+
+        # Extract trace metadata (pop to keep out of k=v output)
+        trace_depth = extra_data.pop("_depth", None)
+        extra_data.pop("_trace_dir", None)
+        trace_elapsed = extra_data.pop("_elapsed", None)
+
         kv_parts = [f"{k}={v}" for k, v in extra_data.items()]
 
-        elapsed = getattr(record, "elapsed_ms", None)
-        if elapsed is not None:
-            if elapsed >= 1000:
-                kv_parts.append(f"+{elapsed / 1000:.1f}s")
-            else:
-                kv_parts.append(f"+{elapsed}ms")
+        if trace_elapsed:
+            kv_parts.append(trace_elapsed)
+        else:
+            elapsed = getattr(record, "elapsed_ms", None)
+            if elapsed is not None:
+                if elapsed >= 1000:
+                    kv_parts.append(f"+{elapsed / 1000:.1f}s")
+                else:
+                    kv_parts.append(f"+{elapsed}ms")
 
         kv_str = f" | {' '.join(kv_parts)}" if kv_parts else ""
         msg = record.getMessage()
 
-        line = f"{timestamp} {record.levelname:<8} [{mod}] {msg}{kv_str}"
+        # Add call-depth indent for trace messages
+        indent = f"{'| ' * trace_depth}" if trace_depth is not None else ""
+
+        line = f"{timestamp} {record.levelname:<8} [{mod}] {indent}{msg}{kv_str}"
 
         if record.exc_info and not record.exc_text:
             record.exc_text = self.formatException(record.exc_info)

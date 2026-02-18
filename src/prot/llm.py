@@ -4,7 +4,7 @@ import httpx
 from anthropic import AsyncAnthropic
 
 from prot.config import settings
-from prot.log import get_logger
+from prot.log import get_logger, logged
 
 logger = get_logger(__name__)
 
@@ -20,6 +20,7 @@ class LLMClient:
         self._hass_client = httpx.AsyncClient(timeout=_HASS_TIMEOUT)
         self._last_response_content = None
 
+    @logged(slow_ms=2000, log_args=True)
     async def stream_response(
         self,
         system_blocks: list[dict],

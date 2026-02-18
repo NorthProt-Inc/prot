@@ -26,6 +26,7 @@ def _make_pipeline():
     p._vad.threshold = 0.5
     p._vad.is_speech = MagicMock(return_value=False)
     p._vad.reset = MagicMock()
+    p._vad.drain_prebuffer = MagicMock(return_value=[])
 
     # STT
     p._stt = AsyncMock()
@@ -70,6 +71,8 @@ def _make_pipeline():
     # Internal state
     p._conversation_id = MagicMock()
     p._current_transcript = ""
+    p._pending_audio = []
+    p._stt_connected = False
     p._active_timeout_task: asyncio.Task | None = None
     p._loop = asyncio.get_running_loop()
     p._barge_in_count = 0
@@ -185,6 +188,7 @@ class TestOnAudioChunk:
     async def test_forwards_audio_when_listening(self):
         p = _make_pipeline()
         p._sm.on_speech_detected()  # IDLE -> LISTENING
+        p._stt_connected = True
         assert p._sm.state == State.LISTENING
 
         await p._async_audio_chunk(b"\x00" * 512)
@@ -960,3 +964,63 @@ class TestSTTConnectFallback:
         p._stt.is_connected = False
         await p._handle_barge_in()
         assert p._sm.state == State.IDLE
+
+
+class TestPreBuffer:
+    """Audio pre-buffering: ring buffer drain + pending queue during STT connect."""
+
+    async def test_prebuffer_flushed_to_stt_on_speech(self):
+        p = _make_pipeline()
+        p._vad.drain_prebuffer = MagicMock(return_value=[b"pre1", b"pre2"])
+        p._stt.is_connected = True
+        await p._handle_vad_speech()
+        calls = p._stt.send_audio.await_args_list
+        assert len(calls) == 2
+        assert calls[0].args[0] == b"pre1"
+        assert calls[1].args[0] == b"pre2"
+
+    async def test_pending_audio_queued_during_connect(self):
+        p = _make_pipeline()
+        p._vad.drain_prebuffer = MagicMock(return_value=[])
+
+        async def slow_connect():
+            p._pending_audio.append(b"during1")
+
+        p._stt.connect = AsyncMock(side_effect=slow_connect)
+        p._stt.is_connected = True
+        await p._handle_vad_speech()
+        calls = p._stt.send_audio.await_args_list
+        assert len(calls) == 1
+        assert calls[0].args[0] == b"during1"
+
+    async def test_stt_connected_false_routes_to_pending(self):
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._stt_connected = False
+        await p._async_audio_chunk(b"\x00" * 512)
+        assert b"\x00" * 512 in p._pending_audio
+        p._stt.send_audio.assert_not_awaited()
+
+    async def test_stt_connected_true_routes_to_stt(self):
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._stt_connected = True
+        await p._async_audio_chunk(b"\x00" * 512)
+        p._stt.send_audio.assert_awaited_once()
+        assert len(p._pending_audio) == 0
+
+    async def test_pending_cleared_after_flush(self):
+        p = _make_pipeline()
+        p._vad.drain_prebuffer = MagicMock(return_value=[b"x"])
+        p._stt.is_connected = True
+        await p._handle_vad_speech()
+        assert len(p._pending_audio) == 0
+        assert p._stt_connected is True
+
+    async def test_connect_failure_clears_pending(self):
+        p = _make_pipeline()
+        p._vad.drain_prebuffer = MagicMock(return_value=[b"x", b"y"])
+        p._stt.is_connected = False
+        await p._handle_vad_speech()
+        assert len(p._pending_audio) == 0
+        assert p._stt_connected is False

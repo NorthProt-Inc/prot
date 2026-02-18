@@ -10,7 +10,7 @@ from anthropic import AsyncAnthropic
 from prot.config import settings
 from prot.embeddings import AsyncVoyageEmbedder
 from prot.graphrag import GraphRAGStore
-from prot.log import get_logger
+from prot.log import get_logger, logged
 from prot.processing import content_to_text
 
 logger = get_logger(__name__)
@@ -51,6 +51,7 @@ class MemoryExtractor:
         if self._community_detector:
             await self._community_detector.close()
 
+    @logged(slow_ms=3000)
     async def extract_from_conversation(self, messages: list[dict]) -> dict:
         """Use Haiku 4.5 to extract entities and relationships from conversation."""
         logger.info("Extracting", messages=len(messages))
@@ -77,6 +78,7 @@ class MemoryExtractor:
             logger.warning("Extraction JSON parse failed", raw=raw[:200])
             return {"entities": [], "relationships": []}
 
+    @logged(slow_ms=2000)
     async def save_extraction(self, extraction: dict) -> None:
         """Embed and save extracted entities and relationships in a single transaction."""
         entities = extraction.get("entities", [])

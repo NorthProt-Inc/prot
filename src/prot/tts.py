@@ -4,7 +4,7 @@ import httpx
 from elevenlabs import AsyncElevenLabs
 
 from prot.config import settings
-from prot.log import get_logger
+from prot.log import get_logger, logged
 
 logger = get_logger(__name__)
 
@@ -18,6 +18,7 @@ class TTSClient:
         )
         self._cancelled = False
 
+    @logged(slow_ms=1000)
     async def stream_audio(self, text: str) -> AsyncIterator[bytes]:
         """Stream PCM audio bytes for given text."""
         self._cancelled = False
@@ -38,6 +39,7 @@ class TTSClient:
         except Exception:
             logger.exception("TTS stream failed", text=text[:30])
 
+    @logged(slow_ms=1000)
     async def warm(self) -> None:
         """Pre-warm HTTP connection pool by making a lightweight API call."""
         try:

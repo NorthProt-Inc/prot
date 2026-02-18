@@ -11,7 +11,7 @@ import websockets
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
 from prot.config import settings
-from prot.log import get_logger
+from prot.log import get_logger, logged
 
 logger = get_logger(__name__)
 
@@ -39,6 +39,7 @@ class STTClient:
     def is_connected(self) -> bool:
         return self._ws is not None
 
+    @logged(slow_ms=1000)
     async def connect(self) -> None:
         """Open WebSocket connection to ElevenLabs and start receiving."""
         if self._ws is not None and getattr(self._ws, "open", False):
@@ -112,6 +113,7 @@ class STTClient:
                 self._ws = None
                 self._recv_task = None
 
+    @logged(slow_ms=1000)
     async def disconnect(self) -> None:
         """Close WebSocket connection."""
         if self._recv_task:

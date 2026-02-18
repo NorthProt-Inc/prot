@@ -1,3 +1,5 @@
+from collections import deque
+
 import torch
 
 
@@ -10,6 +12,7 @@ class VADProcessor:
         sample_rate: int = 16000,
         speech_count_threshold: int = 3,
         chunk_bytes: int = 1024,
+        prebuffer_chunks: int = 8,
     ):
         self._model, _ = torch.hub.load(
             "snakers4/silero-vad", "silero_vad", trust_repo=True
@@ -21,6 +24,7 @@ class VADProcessor:
         self._speech_count = 0
         # Pre-allocate float32 buffer (int16 = 2 bytes/sample)
         self._float_buf = torch.empty(chunk_bytes // 2, dtype=torch.float32)
+        self.prebuffer: deque[bytes] = deque(maxlen=prebuffer_chunks)
 
     @property
     def threshold(self) -> float:
@@ -32,6 +36,7 @@ class VADProcessor:
 
     def is_speech(self, pcm_bytes: bytes) -> bool:
         """Check if PCM audio chunk contains speech."""
+        self.prebuffer.append(pcm_bytes)
         with torch.inference_mode():
             raw = torch.frombuffer(bytearray(pcm_bytes), dtype=torch.int16)
             n = raw.numel()
@@ -49,7 +54,14 @@ class VADProcessor:
 
         return self._speech_count >= self._speech_count_threshold
 
+    def drain_prebuffer(self) -> list[bytes]:
+        """Return all buffered chunks and clear the ring buffer."""
+        chunks = list(self.prebuffer)
+        self.prebuffer.clear()
+        return chunks
+
     def reset(self) -> None:
         """Reset internal state."""
         self._speech_count = 0
         self._model.reset_states()
+        self.prebuffer.clear()

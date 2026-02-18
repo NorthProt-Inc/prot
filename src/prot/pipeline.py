@@ -17,7 +17,7 @@ from prot.state import State, StateMachine
 from prot.stt import STTClient
 from prot.tts import TTSClient
 from prot.vad import VADProcessor
-from prot.log import get_logger, start_turn, reset_turn
+from prot.log import get_logger, start_turn, reset_turn, logged
 
 logger = get_logger(__name__)
 
@@ -30,7 +30,10 @@ class Pipeline:
             vad_threshold_normal=settings.vad_threshold,
             vad_threshold_speaking=settings.vad_threshold_speaking,
         )
-        self._vad = VADProcessor(threshold=settings.vad_threshold)
+        self._vad = VADProcessor(
+            threshold=settings.vad_threshold,
+            prebuffer_chunks=settings.vad_prebuffer_chunks,
+        )
         self._stt = STTClient(
             on_transcript=self._on_transcript,
             on_utterance_end=self._handle_utterance_end,
@@ -49,6 +52,8 @@ class Pipeline:
 
         self._conversation_id = uuid4()
         self._current_transcript: str = ""
+        self._pending_audio: list[bytes] = []
+        self._stt_connected: bool = False
         self._active_timeout_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._barge_in_count: int = 0
@@ -145,7 +150,10 @@ class Pipeline:
 
             # Forward audio to STT when listening
             if self._sm.state == State.LISTENING:
-                await self._stt.send_audio(data)
+                if self._stt_connected:
+                    await self._stt.send_audio(data)
+                else:
+                    self._pending_audio.append(data)
         except Exception:
             logger.exception("Error in audio chunk processing")
 
@@ -154,13 +162,26 @@ class Pipeline:
         start_turn()
         logger.info("VAD speech", state=self._sm.state.value)
         self._sm.on_speech_detected()
-        self._vad.reset()
         self._current_transcript = ""
+        self._stt_connected = False
+
+        # Drain ring buffer BEFORE reset (pre-trigger audio)
+        self._pending_audio = self._vad.drain_prebuffer()
+        self._vad.reset()
+
         await self._stt.connect()
         if not self._stt.is_connected:
             logger.warning("STT connect failed, falling back to IDLE")
             self._sm._state = State.IDLE
+            self._pending_audio.clear()
             reset_turn()
+            return
+
+        # Flush prebuffer + audio that arrived during connect
+        for chunk in self._pending_audio:
+            await self._stt.send_audio(chunk)
+        self._pending_audio.clear()
+        self._stt_connected = True
 
     async def _on_transcript(self, text: str, is_final: bool) -> None:
         """STT callback — store final transcript only."""
@@ -177,6 +198,8 @@ class Pipeline:
 
         logger.info("Utterance done", len=len(self._current_transcript.strip()))
         self._sm.on_utterance_complete()
+        self._stt_connected = False
+        self._pending_audio.clear()
         await self._stt.disconnect()
 
         self._ctx.add_message("user", self._current_transcript)
@@ -185,6 +208,7 @@ class Pipeline:
 
     _MAX_TOOL_ITERATIONS = 3
 
+    @logged(slow_ms=2000)
     async def _process_response(self) -> None:
         """Stream LLM -> TTS -> playback with producer-consumer pipeline.
 
@@ -364,14 +388,25 @@ class Pipeline:
         self._tts.flush()
         await self._player.kill()
         self._sm.on_interrupt_handled()
-        self._vad.reset()
+        self._stt_connected = False
         start_turn()
         self._current_transcript = ""
+
+        self._pending_audio = self._vad.drain_prebuffer()
+        self._vad.reset()
+
         await self._stt.connect()
         if not self._stt.is_connected:
             logger.warning("STT reconnect failed after barge-in, falling back to IDLE")
             self._sm._state = State.IDLE
+            self._pending_audio.clear()
             reset_turn()
+            return
+
+        for chunk in self._pending_audio:
+            await self._stt.send_audio(chunk)
+        self._pending_audio.clear()
+        self._stt_connected = True
 
     def _start_active_timeout(self) -> None:
         """Start timer to return to IDLE after active_timeout seconds."""
@@ -453,6 +488,8 @@ class Pipeline:
 
     async def shutdown(self) -> None:
         """Clean shutdown of all components."""
+        self._stt_connected = False
+        self._pending_audio.clear()
         self._save_session_log()
 
         if self._active_timeout_task is not None:

@@ -133,3 +133,44 @@ class TestVADProcessor:
         vad = VADProcessor()
         # float_buf should be 1024 // 2 = 512 samples
         assert vad._float_buf.numel() == 512
+
+    def test_prebuffer_stores_chunks(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor(threshold=0.5, prebuffer_chunks=5)
+        for i in range(3):
+            vad.is_speech(bytes([i]) * 1024)
+        assert len(vad.prebuffer) == 3
+
+    def test_prebuffer_rolls_over(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor(threshold=0.5, prebuffer_chunks=3)
+        for i in range(5):
+            vad.is_speech(bytes([i]) * 1024)
+        assert len(vad.prebuffer) == 3
+        assert vad.prebuffer[0] == bytes([2]) * 1024
+
+    def test_drain_prebuffer_returns_and_clears(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor(threshold=0.5, prebuffer_chunks=5)
+        for i in range(3):
+            vad.is_speech(bytes([i]) * 1024)
+        chunks = vad.drain_prebuffer()
+        assert len(chunks) == 3
+        assert len(vad.prebuffer) == 0
+
+    def test_reset_clears_prebuffer(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor(threshold=0.5, prebuffer_chunks=5)
+        vad.is_speech(b"\x00" * 1024)
+        vad.reset()
+        assert len(vad.prebuffer) == 0
+
+    def test_prebuffer_default_size(self):
+        from prot.vad import VADProcessor
+
+        vad = VADProcessor(threshold=0.5)
+        assert vad.prebuffer.maxlen == 8

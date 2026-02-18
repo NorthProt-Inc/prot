@@ -5,4 +5,5 @@ from prot.logging import (  # noqa: F401
     setup_logging,
     start_turn,
     reset_turn,
+    logged,
 )
