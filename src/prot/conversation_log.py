@@ -1,4 +1,4 @@
-"""Daily JSON conversation log archival."""
+"""Daily JSONL conversation log archival."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def _content_to_text(content) -> str:
 
 
 class ConversationLogger:
-    """Save conversation sessions as daily JSON files."""
+    """Save conversation sessions as daily JSONL files."""
 
     def __init__(self, log_dir: str = "data/conversations") -> None:
         self._log_dir = Path(log_dir)
@@ -37,13 +37,13 @@ class ConversationLogger:
     def save_session(
         self, session_id: UUID, messages: list[dict]
     ) -> Path | None:
-        """Write conversation to JSON file. Returns path or None on error."""
+        """Append session to daily JSONL file. Returns path or None on error."""
         if not messages:
             return None
         try:
             now = datetime.now(LOCAL_TZ)
             today = now.strftime("%Y-%m-%d")
-            path = self._log_dir / f"{today}-{str(session_id)[:8]}.json"
+            path = self._log_dir / f"{today}.jsonl"
             path.parent.mkdir(parents=True, exist_ok=True)
 
             serializable = []
@@ -53,16 +53,15 @@ class ConversationLogger:
                     "content": _content_to_text(m.get("content", "")),
                 })
 
-            data = {
+            record = json.dumps({
                 "session_id": str(session_id),
                 "timestamp": now.isoformat(),
                 "messages": serializable,
-                "version": "1.0",
-            }
-            path.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            }, ensure_ascii=False)
+
+            with path.open("a", encoding="utf-8") as f:
+                f.write(record + "\n")
+
             logger.info("Session saved", path=str(path), messages=len(messages))
             return path
         except Exception:
