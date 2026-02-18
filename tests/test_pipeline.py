@@ -712,6 +712,185 @@ class TestToolUseHandling:
         assert any("is_error" in r for r in tool_result)
 
 
+class TestStreamResponseResetContent:
+    """stream_response resets _last_response_content before streaming."""
+
+    async def test_last_response_content_reset_before_stream(self):
+        """_last_response_content is None if stream fails before completion."""
+        from prot.llm import LLMClient
+
+        client = LLMClient.__new__(LLMClient)
+        client._cancelled = False
+        client._active_stream = None
+        # Simulate stale data from previous iteration
+        client._last_response_content = [MagicMock(type="tool_use")]
+
+        # Mock the Anthropic client to raise before streaming
+        client._client = MagicMock()
+        client._client.beta.messages.stream = MagicMock(
+            side_effect=RuntimeError("connection failed")
+        )
+
+        with pytest.raises(RuntimeError):
+            async for _ in client.stream_response([], None, []):
+                pass
+
+        # Should be reset to None, not stale tool_use blocks
+        assert client._last_response_content is None
+
+
+class TestToolLoopExhaustion:
+    """_process_response() — tool loop hits max iterations without deadlock."""
+
+    async def test_last_iteration_strips_tools(self):
+        """On the final iteration, tools=None forces text-only response."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        captured_tools = []
+
+        async def fake_stream(system, tools, messages):
+            captured_tools.append(tools)
+            yield "Response."
+
+        p._llm.stream_response = fake_stream
+
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "home_assistant"
+        tool_block.id = "tool_exhaust"
+        tool_block.input = {"action": "get_state", "entity_id": "light.living"}
+
+        call_count = 0
+
+        def fake_get_tool():
+            nonlocal call_count
+            call_count += 1
+            # Return tool blocks for first 2 calls, empty on 3rd (tools stripped)
+            return [tool_block] if call_count < 3 else []
+
+        p._llm.get_tool_use_blocks = fake_get_tool
+        p._llm.execute_tool = AsyncMock(return_value={"state": "on"})
+        p._llm.last_response_content = [MagicMock(type="text")]
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            await p._process_response()
+
+        assert len(captured_tools) == 3
+        assert captured_tools[0] is not None  # iteration 0: tools passed
+        assert captured_tools[1] is not None  # iteration 1: tools passed
+        assert captured_tools[2] is None      # iteration 2: tools stripped
+        assert p._sm.state == State.ACTIVE    # not stuck in PROCESSING
+
+
+class TestInterruptionDuringToolExec:
+    """_process_response() — barge-in during tool execution bails cleanly."""
+
+    async def test_bails_out_when_interrupted_during_tool_exec(self):
+        """When barge-in fires during tool execution, pipeline exits without ValueError."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        async def fake_stream(*a, **kw):
+            yield "Checking."
+
+        p._llm.stream_response = fake_stream
+
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "home_assistant"
+        tool_block.id = "tool_int"
+        tool_block.input = {"action": "get_state", "entity_id": "light.living"}
+
+        p._llm.get_tool_use_blocks = MagicMock(return_value=[tool_block])
+
+        async def fake_execute(name, inp):
+            # Simulate barge-in during tool execution
+            p._sm.on_speech_detected()    # SPEAKING -> INTERRUPTED
+            p._sm.on_interrupt_handled()  # INTERRUPTED -> LISTENING
+            return {"state": "on"}
+
+        p._llm.execute_tool = fake_execute
+        p._llm.last_response_content = [MagicMock(type="text")]
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            await p._process_response()
+
+        # Should have bailed out; state managed by barge-in handler
+        assert p._sm.state == State.LISTENING
+
+
+class TestExceptionRecovery:
+    """_process_response() — exception recovers state appropriately."""
+
+    async def test_exception_from_speaking_recovers_to_active(self):
+        """When streaming raises from SPEAKING, state is recovered to ACTIVE."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        async def failing_stream(*a, **kw):
+            yield "Hello"
+            raise RuntimeError("API error")
+
+        p._llm.stream_response = failing_stream
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            await p._process_response()
+
+        assert p._sm.state == State.ACTIVE
+
+    async def test_exception_after_barge_in_preserves_listening(self):
+        """When exception fires after barge-in moved state to LISTENING, don't force ACTIVE."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        async def failing_stream(*a, **kw):
+            yield "Hello"
+            # Simulate: barge-in already happened, state is LISTENING
+            p._sm._state = State.LISTENING
+            raise RuntimeError("Error after barge-in")
+
+        p._llm.stream_response = failing_stream
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            await p._process_response()
+
+        # State should remain LISTENING, not forced to ACTIVE
+        assert p._sm.state == State.LISTENING
+
+
 class TestSTTConnectFallback:
     """Pipeline falls back to IDLE when STT connect fails."""
 

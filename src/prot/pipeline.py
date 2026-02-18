@@ -191,6 +191,11 @@ class Pipeline:
             for iteration in range(self._MAX_TOOL_ITERATIONS):
                 messages = self._ctx.get_messages()
 
+                # [FIX 1] Strip tools on final iteration to force text-only response
+                iter_tools = tools if iteration < self._MAX_TOOL_ITERATIONS - 1 else None
+                if iter_tools is None and tools:
+                    logger.warning("Tool loop limit, forcing text-only", iteration=iteration)
+
                 _response_parts: list[str] = []
                 buffer = ""
                 audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
@@ -200,7 +205,7 @@ class Pipeline:
                     nonlocal buffer, _last_pressure_log
                     try:
                         async for chunk in self._llm.stream_response(
-                            system_blocks, tools, messages
+                            system_blocks, iter_tools, messages  # [FIX 1] iter_tools
                         ):
                             if self._sm.state == State.INTERRUPTED:
                                 break
@@ -245,6 +250,14 @@ class Pipeline:
                         await self._player.play_chunk(data)
 
                 logger.info("LLM streaming", model=settings.claude_model, iteration=iteration)
+
+                # [FIX 2] Guard: bail if state changed (e.g. barge-in during previous tool exec)
+                if self._sm.state != State.PROCESSING:
+                    logger.info("State changed before TTS start",
+                                iteration=iteration, state=self._sm.state.value)
+                    reset_turn()
+                    return
+
                 self._sm.on_tts_started()  # PROCESSING -> SPEAKING
                 await self._player.start()
 
@@ -275,6 +288,10 @@ class Pipeline:
                         reset_turn()
                         self._start_active_timeout()
                         self._extract_memories_bg()
+                    else:
+                        # [FIX 3] Interrupted without tools — clean up turn timer
+                        logger.info("Response interrupted", state=self._sm.state.value)
+                        reset_turn()
                     return
 
                 # Tool use detected — execute and loop
@@ -303,7 +320,23 @@ class Pipeline:
                         })
 
                 self._ctx.add_message("user", tool_results)
+
+                # [FIX 4] Guard: bail if barge-in happened during tool execution
+                if self._sm.state != State.SPEAKING:
+                    logger.info("Interrupted during tool execution",
+                                iteration=iteration, state=self._sm.state.value)
+                    reset_turn()
+                    return
+
                 self._sm.on_tool_iteration()  # SPEAKING -> PROCESSING
+
+            # [FIX 5] Defense-in-depth: for loop exhausted without returning
+            # Should not reach here with tool stripping, but guard against it
+            logger.error("Tool loop fell through without resolution")
+            reset_turn()
+            if self._sm.state in (State.PROCESSING, State.SPEAKING):
+                self._sm._state = State.ACTIVE
+                self._start_active_timeout()
 
         except Exception:
             logger.exception("Error in _process_response")
@@ -311,6 +344,11 @@ class Pipeline:
                 await self._player.kill()
             except Exception:
                 pass
+            # [FIX 6] State-aware recovery — only force ACTIVE from stuck states
+            reset_turn()
+            if self._sm.state in (State.PROCESSING, State.SPEAKING):
+                self._sm._state = State.ACTIVE
+                self._start_active_timeout()
 
     async def _handle_barge_in(self) -> None:
         """User interrupted during TTS — cancel everything, reconnect STT."""
