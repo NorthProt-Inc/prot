@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     voyage_model: str = "voyage-4"
     voyage_dimension: int = 1024
 
+    # Reranker
+    rerank_model: str = "rerank-2.5"
+    rerank_top_k: int = 5
+
     # Memory
     memory_extraction_model: str = "claude-haiku-4-5-20251001"
     rag_context_target_tokens: int = 3000
