@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from prot.playback import AudioPlayer
 
 
-@pytest.mark.asyncio
 class TestAudioPlayer:
     async def test_play_chunk_writes_to_stdin(self):
         mock_proc = AsyncMock()

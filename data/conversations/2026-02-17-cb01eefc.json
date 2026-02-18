@@ -1,0 +1,23 @@
+{
+  "session_id": "cb01eefc-1608-4820-b455-10d4420c6c8d",
+  "timestamp": "2026-02-17T21:28:19.505124-08:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "음질 개선 후 다시 테스트 중입니다."
+    },
+    {
+      "role": "assistant",
+      "content": "\n\n  어떤 쪽 손봤어? 코덱 세팅인지, 마이크 하드웨어 쪽인지."
+    },
+    {
+      "role": "user",
+      "content": "어제의 구현이 각 PCM 청크마다 별도의 오디오 버퍼 사운드 노드를 생성해서 스케줄링 하는 방식인데 청크가 작으면 버퍼 경계에서 갭이 발생해서 링 버퍼 방식으로 해결을 했습니다."
+    },
+    {
+      "role": "assistant",
+      "content": "\n\n  깔끔한 진단이다. AudioBufferSourceNode per chunk는 스케줄링 정밀도가 currentTime 기반이라 작은 청크일수록 갭 누적이 불가피하지. 링 버퍼면 AudioWorklet 써서 continuous write 하는 구조로 간 거야, 아니면 ScriptProcessorNode 쪽이야?"
+    }
+  ],
+  "version": "1.0"
+}

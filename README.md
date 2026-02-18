@@ -101,10 +101,10 @@ systemctl --user enable --now prot
 | Command | Description |
 |---------|-------------|
 | `uv sync` | Install dependencies |
-| `uv sync --group dev` | Install with dev dependencies |
+| `uv sync --extra dev` | Install with dev dependencies |
 | `uv run pytest` | Run unit tests |
 | `uv run pytest -m integration` | Run integration tests (requires API keys) |
-| `uv run pytest --cov=prot` | Run tests with coverage |
+| `uv run pytest --cov=prot --cov-report=term-missing` | Run tests with coverage |
 | `uv run uvicorn prot.app:app --reload` | Dev server with hot reload |
 
 ---

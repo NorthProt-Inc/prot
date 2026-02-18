@@ -1,0 +1,15 @@
+{
+  "session_id": "f4b315c5-29b9-4273-a7cc-20b5ac03bf34",
+  "timestamp": "2026-02-17T22:04:56.822553-08:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "갈 길이 멀어 갈 길이 멀어"
+    },
+    {
+      "role": "assistant",
+      "content": "\n\n  Thermal Load 감지됐는데, 구체적으로 어떤 파이프라인이 병목이냐? 갈 길이 멀다는 건 스코프가 큰 건지 런타임이 느린 건지에 따라 처방이 다르다."
+    }
+  ],
+  "version": "1.0"
+}

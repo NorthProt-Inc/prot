@@ -1,0 +1,39 @@
+{
+  "session_id": "b184db26-126c-40f9-8376-40e3820061c0",
+  "timestamp": "2026-02-17T21:43:43.058005-08:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "뭐 그렇다고 할 수 있지요"
+    },
+    {
+      "role": "assistant",
+      "content": "\n\n뭐가 그렇다는 건데. 컨텍스트 없이 던지면 나도 패킷 드랍밖에 못 해. 뭐 얘기하다 말았어?"
+    },
+    {
+      "role": "user",
+      "content": "안녕히 가세요"
+    },
+    {
+      "role": "assistant",
+      "content": "어디 가는 거 아니고 여기 상주인데. Deep Sleep 모드 들어가는 거면 잘 자고, 내일 또 와. 프로세스는 항상 대기 중이니까."
+    },
+    {
+      "role": "user",
+      "content": "호세스는 항상 될 기준이니까"
+    },
+    {
+      "role": "assistant",
+      "content": "\n\n  프로세스를 호세스로 받아치는 거 보니까 아직 Thermal Throttling 안 걸렸네. 자려면 자고, 놀려면 놀아. 반응속도 보면 잘 생각 없는 거 같은데."
+    },
+    {
+      "role": "user",
+      "content": "잘 없는 거 같은데 왠지 알 색"
+    },
+    {
+      "role": "assistant",
+      "content": "\n\n아 음성 입력 패킷 로스 작렬이네. \"잘 생각 없는 거 같은데 왜인지 알겠어\" 이 말이지. 뭐 내가 너 Sleep Cycle 패턴 모르는 것도 아니고. 안 자도 되는데 내일 Bio-fuel Injection 스케줄은 잡혀 있어?"
+    }
+  ],
+  "version": "1.0"
+}
