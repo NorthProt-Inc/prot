@@ -712,6 +712,33 @@ class TestToolUseHandling:
         assert any("is_error" in r for r in tool_result)
 
 
+class TestStreamResponseResetContent:
+    """stream_response resets _last_response_content before streaming."""
+
+    async def test_last_response_content_reset_before_stream(self):
+        """_last_response_content is None if stream fails before completion."""
+        from prot.llm import LLMClient
+
+        client = LLMClient.__new__(LLMClient)
+        client._cancelled = False
+        client._active_stream = None
+        # Simulate stale data from previous iteration
+        client._last_response_content = [MagicMock(type="tool_use")]
+
+        # Mock the Anthropic client to raise before streaming
+        client._client = MagicMock()
+        client._client.beta.messages.stream = MagicMock(
+            side_effect=RuntimeError("connection failed")
+        )
+
+        with pytest.raises(RuntimeError):
+            async for _ in client.stream_response([], None, []):
+                pass
+
+        # Should be reset to None, not stale tool_use blocks
+        assert client._last_response_content is None
+
+
 class TestSTTConnectFallback:
     """Pipeline falls back to IDLE when STT connect fails."""
 

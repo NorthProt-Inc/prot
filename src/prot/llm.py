@@ -31,6 +31,7 @@ class LLMClient:
         system_blocks order: [persona (cached), rag (cached), dynamic (NOT cached)]
         """
         self._cancelled = False
+        self._last_response_content = None  # prevent stale tool blocks on generator abandonment
         logger.info("Streaming", model=settings.claude_model)
 
         async with self._client.beta.messages.stream(
