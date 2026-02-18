@@ -35,8 +35,7 @@ class LLMClient:
         self._last_response_content = None  # prevent stale tool blocks on generator abandonment
         logger.info("Streaming", model=settings.claude_model)
 
-        async with self._client.beta.messages.stream(
-            betas=["compact-2026-01-12"],
+        async with self._client.messages.stream(
             model=settings.claude_model,
             max_tokens=settings.claude_max_tokens,
             thinking={"type": "adaptive"},
@@ -44,9 +43,11 @@ class LLMClient:
             system=system_blocks,
             tools=tools if tools else None,
             messages=messages,
-            context_management={
-                "edits": [{"type": "compact_20260112"}],
-            },
+            # --- Compaction (Opus 4.6 only, re-enable when Sonnet supports it) ---
+            # betas=["compact-2026-01-12"],
+            # context_management={
+            #     "edits": [{"type": "compact_20260112"}],
+            # },
         ) as stream:
             self._active_stream = stream
             async for event in stream:
@@ -66,7 +67,7 @@ class LLMClient:
 
     @property
     def last_response_content(self):
-        """Full response content blocks from last stream (may include compaction)."""
+        """Full response content blocks from last stream."""
         return self._last_response_content
 
     def get_tool_use_blocks(self) -> list:

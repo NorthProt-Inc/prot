@@ -80,3 +80,56 @@ class TestContextManager:
         history = cm.get_messages()
         assert isinstance(history[0]["content"], str)
         assert isinstance(history[1]["content"], list)
+
+
+class TestGetRecentMessages:
+    """get_recent_messages() — sliding window over conversation history."""
+
+    def test_returns_all_when_under_limit(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        cm.add_message("user", "msg1")
+        cm.add_message("assistant", "resp1")
+        result = cm.get_recent_messages(max_turns=10)
+        assert len(result) == 2
+
+    def test_trims_to_max_turns(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        for i in range(20):
+            cm.add_message("user", f"msg-{i}")
+            cm.add_message("assistant", f"resp-{i}")
+        result = cm.get_recent_messages(max_turns=5)
+        assert len(result) == 10
+        assert result[0]["content"] == "msg-15"
+        assert result[-1]["content"] == "resp-19"
+
+    def test_starts_with_user_role(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        for i in range(10):
+            cm.add_message("user", f"msg-{i}")
+            cm.add_message("assistant", f"resp-{i}")
+        result = cm.get_recent_messages(max_turns=3)
+        assert result[0]["role"] == "user"
+
+    def test_skips_orphan_tool_result_at_boundary(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        cm.add_message("user", "hello")
+        cm.add_message("assistant", "hi")
+        cm.add_message("user", "weather?")
+        cm.add_message("assistant", "checking...")
+        cm.add_message("user", [{"type": "tool_result", "tool_use_id": "t1", "content": "sunny"}])
+        cm.add_message("assistant", "It's sunny!")
+        cm.add_message("user", "thanks")
+        cm.add_message("assistant", "welcome")
+        result = cm.get_recent_messages(max_turns=2)
+        assert result[0]["role"] == "user"
+        assert isinstance(result[0]["content"], str)
+
+    def test_get_messages_still_returns_all(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        for i in range(50):
+            cm.add_message("user", f"msg-{i}")
+        assert len(cm.get_messages()) == 50
+
+    def test_empty_history(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        assert cm.get_recent_messages(max_turns=10) == []

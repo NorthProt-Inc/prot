@@ -94,6 +94,21 @@ class ContextManager:
         """Return a copy of the conversation history."""
         return list(self._messages)
 
+    def get_recent_messages(self, max_turns: int = 10) -> list[dict]:
+        """Return recent conversation history (sliding window).
+
+        Keeps the last max_turns * 2 messages, ensuring the window
+        starts at a real user message (not an orphaned tool_result).
+        """
+        max_messages = max_turns * 2
+        messages = self._messages[-max_messages:]
+        while messages and (
+            messages[0]["role"] != "user"
+            or isinstance(messages[0]["content"], list)
+        ):
+            messages = messages[1:]
+        return messages
+
     def update_rag_context(self, context: str) -> None:
         """Replace the RAG context for the next system prompt build."""
         self._rag_context = context

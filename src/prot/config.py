@@ -20,9 +20,10 @@ class Settings(BaseSettings):
     stt_language: str = "ko"
 
     # LLM
-    claude_model: str = "claude-opus-4-6"
-    claude_max_tokens: int = 1500
-    claude_effort: str = "medium"
+    claude_model: str = "claude-sonnet-4-6"
+    claude_max_tokens: int = 4096
+    claude_effort: str = "high"
+    context_max_turns: int = 10
 
     # TTS
     elevenlabs_model: str = "eleven_multilingual_v2"

@@ -220,7 +220,7 @@ class Pipeline:
 
         try:
             for iteration in range(self._MAX_TOOL_ITERATIONS):
-                messages = self._ctx.get_messages()
+                messages = self._ctx.get_recent_messages(settings.context_max_turns)
 
                 # [FIX 1] Strip tools on final iteration to force text-only response
                 iter_tools = tools if iteration < self._MAX_TOOL_ITERATIONS - 1 else None

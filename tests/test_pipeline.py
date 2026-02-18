@@ -55,6 +55,7 @@ def _make_pipeline():
     p._ctx = MagicMock()
     p._ctx.add_message = MagicMock()
     p._ctx.get_messages = MagicMock(return_value=[])
+    p._ctx.get_recent_messages = MagicMock(return_value=[])
     p._ctx.build_system_blocks = MagicMock(return_value=[{"type": "text", "text": "test"}])
     p._ctx.build_tools = MagicMock(return_value=[])
     p._ctx.update_rag_context = MagicMock()
@@ -777,7 +778,7 @@ class TestStreamResponseResetContent:
 
         # Mock the Anthropic client to raise before streaming
         client._client = MagicMock()
-        client._client.beta.messages.stream = MagicMock(
+        client._client.messages.stream = MagicMock(
             side_effect=RuntimeError("connection failed")
         )
 
