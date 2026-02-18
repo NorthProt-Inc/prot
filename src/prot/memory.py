@@ -22,7 +22,7 @@ def _content_to_text(content) -> str:
     if isinstance(content, list):
         return " ".join(
             block.text if hasattr(block, "text") else
-            str(block.get("text", "")) if isinstance(block, dict) else ""
+            str(block.get("text", "") or block.get("content", "")) if isinstance(block, dict) else ""
             for block in content
         )
     return str(content)
@@ -49,14 +49,19 @@ class MemoryExtractor:
         anthropic_key: str | None = None,
         store: GraphRAGStore | None = None,
         embedder: AsyncVoyageEmbedder | None = None,
+        community_detector=None,
     ):
         self._llm = AsyncAnthropic(api_key=anthropic_key or settings.anthropic_api_key)
         self._store = store
         self._embedder = embedder
+        self._community_detector = community_detector
+        self._extraction_count: int = 0
 
     async def close(self) -> None:
         """Close the underlying Anthropic client."""
         await self._llm.close()
+        if self._community_detector:
+            await self._community_detector.close()
 
     async def extract_from_conversation(self, messages: list[dict]) -> dict:
         """Use Haiku 4.5 to extract entities and relationships from conversation."""
@@ -121,6 +126,21 @@ class MemoryExtractor:
                             conn=conn,
                         )
         logger.info("Saved", entities=len(entities), rels=len(relationships))
+
+        self._extraction_count += 1
+        if (
+            self._community_detector
+            and self._extraction_count % settings.community_rebuild_interval == 0
+        ):
+            await self._maybe_rebuild_communities()
+
+    async def _maybe_rebuild_communities(self) -> None:
+        """Trigger community detection rebuild."""
+        try:
+            count = await self._community_detector.rebuild()
+            logger.info("Community rebuild complete", communities=count)
+        except Exception:
+            logger.warning("Community rebuild failed", exc_info=True)
 
     async def pre_load_context(self, query: str) -> str:
         """Search GraphRAG (entities + neighbors + communities) and assemble Block 2 context."""

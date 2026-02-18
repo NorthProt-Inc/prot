@@ -319,6 +319,90 @@ class TestSaveMessage:
         assert call.args[4] == [0.1] * 1024
 
 
+class TestLoadGraphForCommunityDetection:
+    """load_graph_for_community_detection should return entities and relationships."""
+
+    async def test_returns_entities_and_relationships(self):
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+
+        entity_record = mock_record(
+            id=uuid4(), name="Bob", entity_type="person", description="A friend"
+        )
+        rel_record = mock_record(
+            source_id=uuid4(), target_id=uuid4(), weight=1.0
+        )
+        conn.fetch = AsyncMock(side_effect=[[entity_record], [rel_record]])
+
+        entities, relationships = await store.load_graph_for_community_detection()
+        assert len(entities) == 1
+        assert entities[0]["name"] == "Bob"
+        assert len(relationships) == 1
+        assert relationships[0]["weight"] == 1.0
+
+    async def test_returns_empty_lists_when_no_data(self):
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+        conn.fetch = AsyncMock(return_value=[])
+
+        entities, relationships = await store.load_graph_for_community_detection()
+        assert entities == []
+        assert relationships == []
+
+
+class TestRebuildCommunities:
+    """rebuild_communities should delete and re-insert atomically."""
+
+    async def test_deletes_and_inserts_in_transaction(self):
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+        tx = MagicMock()
+        tx.__aenter__ = AsyncMock(return_value=tx)
+        tx.__aexit__ = AsyncMock(return_value=False)
+        conn.transaction = MagicMock(return_value=tx)
+
+        community_id = uuid4()
+        entity_id = uuid4()
+        conn.fetchrow = AsyncMock(return_value=mock_record(id=community_id))
+
+        await store.rebuild_communities([{
+            "summary": "Test group",
+            "summary_embedding": [0.1] * 1024,
+            "entity_ids": [entity_id],
+        }])
+
+        conn.execute.assert_called_once()
+        assert "DELETE" in str(conn.execute.call_args)
+        conn.fetchrow.assert_called_once()
+        conn.executemany.assert_called_once()
+
+    async def test_empty_communities_just_deletes(self):
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+        tx = MagicMock()
+        tx.__aenter__ = AsyncMock(return_value=tx)
+        tx.__aexit__ = AsyncMock(return_value=False)
+        conn.transaction = MagicMock(return_value=tx)
+
+        await store.rebuild_communities([])
+
+        conn.execute.assert_called_once()
+        assert "DELETE" in str(conn.execute.call_args)
+        conn.fetchrow.assert_not_called()
+
+
+class TestGetEntityCount:
+    """get_entity_count should return total entity count."""
+
+    async def test_returns_count(self):
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+        conn.fetchrow = AsyncMock(return_value=mock_record(cnt=42))
+
+        count = await store.get_entity_count()
+        assert count == 42
+
+
 class TestGetEntityNeighbors:
     """get_entity_neighbors should return neighboring entities."""
 

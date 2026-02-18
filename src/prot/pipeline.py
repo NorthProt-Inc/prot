@@ -56,6 +56,7 @@ class Pipeline:
         self._speaking_since: float = 0.0  # monotonic time when SPEAKING entered
         self._barge_in_grace: float = 1.5  # seconds to ignore VAD after SPEAKING starts
         self._background_tasks: set[asyncio.Task] = set()
+        self._session_msg_offset: int = 0
 
     @property
     def state(self) -> StateMachine:
@@ -76,12 +77,18 @@ class Pipeline:
             from prot.graphrag import GraphRAGStore
             from prot.embeddings import AsyncVoyageEmbedder
             from prot.memory import MemoryExtractor
+            from prot.community import CommunityDetector
 
             self._graphrag = GraphRAGStore(pool=self._pool)
             self._embedder = AsyncVoyageEmbedder()
+            community_detector = CommunityDetector(
+                store=self._graphrag,
+                embedder=self._embedder,
+            )
             self._memory = MemoryExtractor(
                 store=self._graphrag,
                 embedder=self._embedder,
+                community_detector=community_detector,
             )
         except Exception:
             logger.warning("Memory subsystem not available")
@@ -423,10 +430,12 @@ class Pipeline:
         task.add_done_callback(self._background_tasks.discard)
 
     def _save_session_log(self) -> None:
-        """Save conversation log as JSON and reset session."""
+        """Save new conversation messages as JSONL and reset session."""
         messages = self._ctx.get_messages()
-        if messages:
-            self._conv_logger.save_session(self._conversation_id, messages)
+        new_messages = messages[self._session_msg_offset:]
+        if new_messages:
+            self._conv_logger.save_session(self._conversation_id, new_messages)
+        self._session_msg_offset = len(messages)
         self._conversation_id = uuid4()
 
     def diagnostics(self) -> dict:
@@ -444,6 +453,8 @@ class Pipeline:
 
     async def shutdown(self) -> None:
         """Clean shutdown of all components."""
+        self._save_session_log()
+
         if self._active_timeout_task is not None:
             self._active_timeout_task.cancel()
             try:
