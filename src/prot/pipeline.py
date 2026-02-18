@@ -399,7 +399,7 @@ class Pipeline:
                     )
                     self._ctx.update_rag_context(rag)
             except Exception:
-                logger.debug("Memory extraction failed", exc_info=True)
+                logger.warning("Memory extraction failed", exc_info=True)
 
         task = asyncio.create_task(_extract())
         self._background_tasks.add(task)

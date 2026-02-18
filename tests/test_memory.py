@@ -245,6 +245,35 @@ class TestMemoryExtractor:
         lines = [l for l in text.split("\n") if l.strip()]
         assert len(lines) < 20
 
+    async def test_save_extraction_logs_on_empty_entities(self):
+        """Empty extraction should log, not silently return."""
+        mock_store = AsyncMock()
+        mock_embedder = AsyncMock()
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=mock_store, embedder=mock_embedder
+        )
+        with patch("prot.memory.logger") as mock_logger:
+            await extractor.save_extraction({"entities": [], "relationships": []})
+            mock_logger.debug.assert_called_once()
+        mock_store.upsert_entity.assert_not_called()
+
+    async def test_extract_logs_warning_on_json_parse_failure(self):
+        """JSON parse failure should log warning with raw text."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="Not valid JSON")]
+        mock_anthropic.messages.create.return_value = mock_response
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
+             patch("prot.memory.logger") as mock_logger:
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            result = await extractor.extract_from_conversation([
+                {"role": "user", "content": "Hello"},
+            ])
+            assert result == {"entities": [], "relationships": []}
+            mock_logger.warning.assert_called_once()
+
     async def test_pre_load_context_fetches_neighbors_concurrently(self):
         """Verify neighbor queries run concurrently, not sequentially."""
         import asyncio

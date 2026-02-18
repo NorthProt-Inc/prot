@@ -29,14 +29,16 @@ def _content_to_text(content) -> str:
 
 
 EXTRACTION_PROMPT = """Extract entities and relationships from this conversation.
+The conversation may be in Korean or English. Keep entity names in their original language.
 
 Return JSON with this exact structure:
 {
-  "entities": [{"name": "...", "type": "person|place|concept|event", "description": "..."}],
+  "entities": [{"name": "...", "type": "person|place|concept|event|preference", "description": "..."}],
   "relationships": [{"source": "...", "target": "...", "type": "...", "description": "..."}]
 }
 
-Only extract factual information. Skip greetings and filler."""
+Extract names, places, preferences, plans, opinions, and technical topics.
+Skip generic greetings and filler. If nothing meaningful, return empty arrays."""
 
 
 class MemoryExtractor:
@@ -71,6 +73,7 @@ class MemoryExtractor:
         try:
             raw = response.content[0].text
         except (IndexError, AttributeError):
+            logger.warning("Empty LLM response for extraction")
             return {"entities": [], "relationships": []}
         # Strip markdown fencing if present
         if raw.startswith("```"):
@@ -78,6 +81,7 @@ class MemoryExtractor:
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
+            logger.warning("Extraction JSON parse failed", raw=raw[:200])
             return {"entities": [], "relationships": []}
 
     async def save_extraction(self, extraction: dict) -> None:
@@ -86,9 +90,8 @@ class MemoryExtractor:
         relationships = extraction.get("relationships", [])
 
         if not entities:
+            logger.debug("Extraction empty, skipping save")
             return
-
-        logger.info("Saved", entities=len(entities), rels=len(relationships))
 
         descriptions = [e["description"] for e in entities]
         embeddings = await self._embedder.embed_texts(descriptions)
@@ -117,6 +120,7 @@ class MemoryExtractor:
                             description=rel["description"],
                             conn=conn,
                         )
+        logger.info("Saved", entities=len(entities), rels=len(relationships))
 
     async def pre_load_context(self, query: str) -> str:
         """Search GraphRAG (entities + neighbors + communities) and assemble Block 2 context."""
