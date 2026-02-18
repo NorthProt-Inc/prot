@@ -282,5 +282,3 @@ pg_dump prot > prot_backup_$(date +%Y%m%d).sql
 | 응답 지연 | `CLAUDE_EFFORT` 값 확인 (`low`/`medium`/`high`), 네트워크 상태 |
 | `SEGV` / crash | `journalctl --user -u prot` 로그 확인, PyAudio 장치 충돌 가능성 |
 | 포트 충돌 | `./scripts/run.sh` 사용 (자동 정리) 또는 `lsof -ti :8000` 수동 확인 |
-
-  npx -p @mermaid-js/mermaid-cli mmdc -i input.mmd -o output.png -s 2 -p docs/puppeteer.json

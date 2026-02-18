@@ -1,13 +1,12 @@
-"""Log formatters: colored console, plain file, JSON."""
+"""Log formatters: colored console, plain file."""
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 
 from prot.logging.constants import (
-    MODULE_MAP, LEVEL_COLORS, RESET, DIM, abbreviate, module_key,
+    MODULE_MAP, LEVEL_COLORS, RESET, DIM, module_key,
 )
 
 
@@ -34,7 +33,7 @@ class SmartFormatter(logging.Formatter):
                 kv_parts.append(f"+{elapsed}ms")
 
         kv_str = f" {DIM}| {' '.join(kv_parts)}{RESET}" if kv_parts else ""
-        msg = abbreviate(record.getMessage())
+        msg = record.getMessage()
 
         line = (
             f"{DIM}{timestamp}{RESET}  "
@@ -69,7 +68,7 @@ class PlainFormatter(logging.Formatter):
                 kv_parts.append(f"+{elapsed}ms")
 
         kv_str = f" | {' '.join(kv_parts)}" if kv_parts else ""
-        msg = abbreviate(record.getMessage())
+        msg = record.getMessage()
 
         line = f"{timestamp} {record.levelname:<8} [{mod}] {msg}{kv_str}"
 
@@ -78,26 +77,3 @@ class PlainFormatter(logging.Formatter):
         if record.exc_text:
             line += "\n" + record.exc_text
         return line
-
-
-class JsonFormatter(logging.Formatter):
-    """JSONL formatter: one JSON object per line."""
-
-    def format(self, record: logging.LogRecord) -> str:
-        dt = datetime.fromtimestamp(record.created, tz=timezone.utc).astimezone()
-        data: dict = {
-            "ts": dt.isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "msg": record.getMessage(),
-        }
-        extra_data: dict = getattr(record, "extra_data", {})
-        data.update(extra_data)
-
-        elapsed = getattr(record, "elapsed_ms", None)
-        if elapsed is not None:
-            data["elapsed_ms"] = elapsed
-
-        if record.exc_info:
-            data["exception"] = self.formatException(record.exc_info)
-        return json.dumps(data, ensure_ascii=False, default=str)

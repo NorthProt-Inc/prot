@@ -115,6 +115,21 @@ class TestConversationLogger:
         assert path.exists()
         assert nested.exists()
 
+    def test_save_session_tool_result_content(self, tmp_path):
+        """tool_result dicts with 'content' key should serialize their content."""
+        logger = ConversationLogger(log_dir=str(tmp_path))
+        session_id = UUID("12345678-1234-1234-1234-123456789abc")
+        messages = [
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu_123", "content": "temperature: 22C"},
+                {"type": "tool_result", "tool_use_id": "tu_456", "content": "lights are on"},
+            ]},
+        ]
+        path = logger.save_session(session_id, messages)
+        data = json.loads(path.read_text(encoding="utf-8").strip())
+        assert "temperature: 22C" in data["messages"][0]["content"]
+        assert "lights are on" in data["messages"][0]["content"]
+
     def test_each_line_is_valid_json(self, tmp_path):
         """Each line in JSONL must be independently parseable."""
         logger = ConversationLogger(log_dir=str(tmp_path))

@@ -77,6 +77,7 @@ def _make_pipeline():
     p._speaking_since = 0.0
     p._barge_in_grace = 1.5
     p._background_tasks = set()
+    p._session_msg_offset = 0
 
     return p
 
@@ -604,6 +605,51 @@ class TestSaveSessionLog:
         p._ctx.get_messages.return_value = []
         p._save_session_log()
 
+        p._conv_logger.save_session.assert_not_called()
+
+    async def test_save_session_log_only_saves_new_messages(self):
+        p = _make_pipeline()
+        p._ctx.get_messages.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        p._save_session_log()
+        first_call_msgs = p._conv_logger.save_session.call_args_list[0][0][1]
+        assert len(first_call_msgs) == 2
+
+        p._ctx.get_messages.return_value = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+            {"role": "user", "content": "weather?"},
+            {"role": "assistant", "content": "sunny"},
+        ]
+        p._save_session_log()
+        second_call_msgs = p._conv_logger.save_session.call_args_list[1][0][1]
+        assert len(second_call_msgs) == 2
+        assert second_call_msgs[0]["content"] == "weather?"
+
+    async def test_save_session_log_skips_if_no_new_messages(self):
+        p = _make_pipeline()
+        p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
+        p._save_session_log()
+        assert p._conv_logger.save_session.call_count == 1
+        p._save_session_log()
+        assert p._conv_logger.save_session.call_count == 1
+
+
+class TestShutdownSessionSave:
+    """shutdown() — saves session log before cleanup."""
+
+    async def test_shutdown_saves_session_log(self):
+        p = _make_pipeline()
+        p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
+        await p.shutdown()
+        p._conv_logger.save_session.assert_called_once()
+
+    async def test_shutdown_skips_session_log_if_empty(self):
+        p = _make_pipeline()
+        p._ctx.get_messages.return_value = []
+        await p.shutdown()
         p._conv_logger.save_session.assert_not_called()
 
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 
 _RE_SENTENCE_SPLIT = re.compile(r'(?<=[.!?~])\s+')
@@ -5,6 +7,18 @@ _RE_SENTENCE_END = re.compile(r'[.!?~]$')
 
 MAX_BUFFER_CHARS = 2000
 
+
+def content_to_text(content) -> str:
+    """Extract plain text from str or list of content blocks."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            block.text if hasattr(block, "text") else
+            str(block.get("text", "") or block.get("content", "")) if isinstance(block, dict) else ""
+            for block in content
+        )
+    return str(content)
 
 
 def chunk_sentences(text: str) -> tuple[list[str], str]:

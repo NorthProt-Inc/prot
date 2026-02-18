@@ -7,8 +7,8 @@ import logging
 import os
 from pathlib import Path
 
-from prot.logging.formatters import SmartFormatter, PlainFormatter, JsonFormatter
-from prot.logging.handlers import create_async_handler, create_error_handler
+from prot.logging.formatters import SmartFormatter, PlainFormatter
+from prot.logging.handlers import create_async_handler
 
 _listeners: list = []
 
@@ -55,24 +55,14 @@ def setup_logging(
     _listeners.append(file_listener)
 
     # 2b. Error-only log file
-    error_handler, error_listener = create_error_handler(
+    error_handler, error_listener = create_async_handler(
         str(log_path / "prot_error.log"),
         formatter=PlainFormatter(),
+        level=logging.ERROR,
     )
     root.addHandler(error_handler)
     error_listener.start()
     _listeners.append(error_listener)
-
-    # 3. Optional JSONL handler
-    json_enabled = os.environ.get("LOG_JSON", "").lower() in ("1", "true", "yes")
-    if json_enabled:
-        json_handler, json_listener = create_async_handler(
-            str(log_path / "prot.jsonl"),
-            formatter=JsonFormatter(),
-        )
-        root.addHandler(json_handler)
-        json_listener.start()
-        _listeners.append(json_listener)
 
     atexit.register(_shutdown_listeners)
 

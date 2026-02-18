@@ -3,7 +3,7 @@
 import logging
 import time
 
-from prot.logging.handlers import create_async_handler, create_error_handler
+from prot.logging.handlers import create_async_handler
 
 
 class TestAsyncHandler:
@@ -50,7 +50,9 @@ class TestAsyncHandler:
 class TestErrorHandler:
     def test_only_captures_errors(self, tmp_path):
         log_file = tmp_path / "error.log"
-        handler, listener = create_error_handler(str(log_file))
+        handler, listener = create_async_handler(
+            str(log_file), level=logging.ERROR
+        )
         listener.start()
 
         logger = logging.getLogger("test.error_filter")

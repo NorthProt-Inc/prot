@@ -89,42 +89,6 @@ class TestUpsertEntity:
         pool.acquire.assert_not_called()
 
 
-class TestGetEntityByName:
-    """get_entity_by_name should return dict or None."""
-
-    async def test_get_entity_by_name_returns_dict(self) -> None:
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        entity_id = uuid4()
-        row = mock_record(
-            id=entity_id,
-            name="TestEntity",
-            entity_type="person",
-            description="A test entity",
-            namespace="default",
-            mention_count=1,
-        )
-        conn.fetchrow = AsyncMock(return_value=row)
-
-        result = await store.get_entity_by_name("TestEntity")
-
-        assert result is not None
-        assert isinstance(result, dict)
-        assert result["name"] == "TestEntity"
-        assert result["id"] == entity_id
-
-    async def test_get_entity_by_name_returns_none(self) -> None:
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        conn.fetchrow = AsyncMock(return_value=None)
-
-        result = await store.get_entity_by_name("NonExistent")
-
-        assert result is None
-
-
 class TestUpsertRelationship:
     """upsert_relationship should insert a new relationship."""
 
@@ -220,31 +184,6 @@ class TestSearchEntitiesSemantic:
         call = conn.fetch.call_args
         assert "<=>" in call.args[0]
         assert "LIMIT" in call.args[0]
-
-
-class TestUpsertCommunity:
-    """upsert_community should insert a new community."""
-
-    async def test_upsert_community(self) -> None:
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        community_id = uuid4()
-        conn.fetchrow = AsyncMock(return_value=mock_record(id=community_id))
-
-        result = await store.upsert_community(
-            level=1,
-            summary="A community of researchers",
-            summary_embedding=[0.1, 0.2, 0.3],
-            entity_count=10,
-        )
-
-        assert result == community_id
-
-        # Verify INSERT on communities table
-        call = conn.fetchrow.call_args
-        assert "INSERT" in call.args[0]
-        assert "communities" in call.args[0]
 
 
 class TestSearchCommunities:

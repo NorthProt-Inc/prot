@@ -16,10 +16,11 @@ wheels/
 # Environment
 .env
 
-# IDE
+# IDE / OS
 .idea/
 .vscode/
 *.swp
+.DS_Store
 
 # Application logs
 logs/

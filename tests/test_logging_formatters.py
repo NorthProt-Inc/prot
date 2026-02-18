@@ -1,9 +1,8 @@
 """Tests for logging formatters."""
 
-import json
 import logging
 
-from prot.logging.formatters import SmartFormatter, PlainFormatter, JsonFormatter
+from prot.logging.formatters import SmartFormatter, PlainFormatter
 
 
 def _make_record(msg="test message", level=logging.INFO, name="prot.pipeline", **extra):
@@ -56,26 +55,3 @@ class TestPlainFormatter:
         record = _make_record(attempt=3)
         line = fmt.format(record)
         assert "attempt=3" in line
-
-
-class TestJsonFormatter:
-    def test_output_is_valid_json(self):
-        fmt = JsonFormatter()
-        record = _make_record(port=8000)
-        line = fmt.format(record)
-        data = json.loads(line)
-        assert data["msg"] == "test message"
-
-    def test_includes_extra_data(self):
-        fmt = JsonFormatter()
-        record = _make_record(port=8000, env="prod")
-        data = json.loads(fmt.format(record))
-        assert data["port"] == 8000
-        assert data["env"] == "prod"
-
-    def test_includes_level_and_logger(self):
-        fmt = JsonFormatter()
-        record = _make_record(name="prot.tts", level=logging.ERROR)
-        data = json.loads(fmt.format(record))
-        assert data["level"] == "ERROR"
-        assert data["logger"] == "prot.tts"

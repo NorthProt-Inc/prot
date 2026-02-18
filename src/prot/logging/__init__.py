@@ -6,8 +6,7 @@ Public API:
     start_turn      — Mark beginning of pipeline turn
     elapsed_ms      — Get ms since start_turn()
     reset_turn      — Clear turn timer
-    logged          — Decorator for auto entry/exit logging
-    StructuredLogger, SmartFormatter, PlainFormatter, JsonFormatter
+    StructuredLogger, SmartFormatter, PlainFormatter
 """
 
 from prot.logging.structured_logger import (
@@ -17,8 +16,7 @@ from prot.logging.structured_logger import (
     elapsed_ms,
     reset_turn,
 )
-from prot.logging.formatters import SmartFormatter, PlainFormatter, JsonFormatter
-from prot.logging.decorator import logged
+from prot.logging.formatters import SmartFormatter, PlainFormatter
 from prot.logging.setup import setup_logging
 
 __all__ = [
@@ -27,9 +25,7 @@ __all__ = [
     "start_turn",
     "elapsed_ms",
     "reset_turn",
-    "logged",
     "StructuredLogger",
     "SmartFormatter",
     "PlainFormatter",
-    "JsonFormatter",
 ]

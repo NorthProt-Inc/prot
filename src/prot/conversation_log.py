@@ -9,23 +9,11 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from prot.log import get_logger
+from prot.processing import content_to_text
 
 logger = get_logger(__name__)
 
 LOCAL_TZ = ZoneInfo("America/Vancouver")
-
-
-def _content_to_text(content) -> str:
-    """Extract plain text from str or list of content blocks."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(
-            block.text if hasattr(block, "text") else
-            str(block.get("text", "")) if isinstance(block, dict) else ""
-            for block in content
-        )
-    return str(content)
 
 
 class ConversationLogger:
@@ -50,7 +38,7 @@ class ConversationLogger:
             for m in messages:
                 serializable.append({
                     "role": m["role"],
-                    "content": _content_to_text(m.get("content", "")),
+                    "content": content_to_text(m.get("content", "")),
                 })
 
             record = json.dumps({

@@ -1,14 +1,7 @@
 """Tests for backward compatibility via prot.log facade."""
 
-from prot.log import (
-    get_logger,
-    setup_logging,
-    start_turn,
-    elapsed_ms,
-    reset_turn,
-    StructuredLogger,
-    SmartFormatter,
-)
+from prot.log import get_logger, setup_logging, start_turn, reset_turn
+from prot.logging import elapsed_ms, StructuredLogger, SmartFormatter
 
 
 class TestBackwardCompat:

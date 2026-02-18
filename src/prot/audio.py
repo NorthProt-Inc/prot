@@ -11,7 +11,7 @@ class AudioManager:
 
     def __init__(
         self,
-        device_index: int = 11,
+        device_index: int | None = None,
         sample_rate: int = 16000,
         chunk_size: int = 512,
         on_audio: Callable[[bytes], None] | None = None,
@@ -23,9 +23,9 @@ class AudioManager:
         self._on_audio = on_audio
         self._stream: pyaudio.Stream | None = None
 
-    def _validate_device(self, index: int) -> int | None:
+    def _validate_device(self, index: int | None) -> int | None:
         """Validate device index. Returns None (default) if invalid."""
-        if index < 0:
+        if index is None or index < 0:
             return None
         try:
             info = self._pa.get_device_info_by_index(index)

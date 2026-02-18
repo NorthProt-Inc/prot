@@ -463,37 +463,21 @@ class Pipeline:
                 pass
             self._active_timeout_task = None
 
-        try:
-            await self._llm.close()
-        except Exception:
-            logger.debug("LLM close error", exc_info=True)
-
-        try:
-            await self._tts.close()
-        except Exception:
-            logger.debug("TTS close error", exc_info=True)
-
-        try:
-            await self._stt.disconnect()
-        except Exception:
-            logger.debug("STT disconnect error", exc_info=True)
-
-        try:
-            await self._player.kill()
-        except Exception:
-            logger.debug("Player kill error", exc_info=True)
-
+        closeables = [
+            self._llm.close,
+            self._tts.close,
+            self._stt.disconnect,
+            self._player.kill,
+        ]
         if self._memory is not None:
-            try:
-                await self._memory.close()
-            except Exception:
-                logger.debug("Memory close error", exc_info=True)
-
+            closeables.append(self._memory.close)
         if self._embedder is not None:
+            closeables.append(self._embedder.close)
+        for close_fn in closeables:
             try:
-                await self._embedder.close()
+                await close_fn()
             except Exception:
-                logger.debug("Embedder close error", exc_info=True)
+                logger.debug("Shutdown error", exc_info=True)
 
         # Cancel background tasks before closing pool
         for task in self._background_tasks:

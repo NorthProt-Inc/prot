@@ -43,18 +43,6 @@ class GraphRAGStore:
             row = await c.fetchrow(query, *args)
             return row["id"]
 
-    async def get_entity_by_name(
-        self, name: str, namespace: str = "default"
-    ) -> dict | None:
-        """Get entity by name within a namespace."""
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT * FROM entities WHERE namespace = $1 AND name = $2",
-                namespace,
-                name,
-            )
-            return dict(row) if row else None
-
     async def upsert_relationship(
         self,
         source_id: UUID,
@@ -94,25 +82,6 @@ class GraphRAGStore:
                 top_k,
             )
             return [dict(r) for r in rows]
-
-    async def upsert_community(
-        self,
-        level: int,
-        summary: str,
-        summary_embedding: list[float] | None = None,
-        entity_count: int = 0,
-    ) -> UUID:
-        """Insert a community record."""
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """INSERT INTO communities (level, summary, summary_embedding, entity_count)
-                VALUES ($1, $2, $3, $4) RETURNING id""",
-                level,
-                summary,
-                summary_embedding,
-                entity_count,
-            )
-            return row["id"]
 
     async def search_communities(
         self, query_embedding: list[float], top_k: int = 10

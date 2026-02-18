@@ -3,10 +3,8 @@
 from prot.logging.constants import (
     MODULE_MAP,
     LEVEL_COLORS,
-    ABBREVIATIONS,
     RESET,
     DIM,
-    abbreviate,
 )
 
 
@@ -19,27 +17,6 @@ class TestModuleMap:
         for mod, (abbrev, color) in MODULE_MAP.items():
             assert len(abbrev) <= 3
             assert color.startswith("\033[")
-
-
-class TestAbbreviations:
-    def test_contains_common_terms(self):
-        assert ABBREVIATIONS["request"] == "req"
-        assert ABBREVIATIONS["response"] == "res"
-        assert ABBREVIATIONS["message"] == "msg"
-        assert ABBREVIATIONS["connection"] == "conn"
-
-    def test_abbreviate_replaces_words(self):
-        assert abbreviate("request received") == "req recv"
-
-    def test_abbreviate_preserves_unknown(self):
-        assert abbreviate("hello world") == "hello world"
-
-    def test_abbreviate_case_insensitive(self):
-        result = abbreviate("Request completed")
-        assert result == "req done"
-
-    def test_abbreviate_empty_string(self):
-        assert abbreviate("") == ""
 
 
 class TestAnsiCodes:

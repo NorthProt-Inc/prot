@@ -11,21 +11,9 @@ from prot.config import settings
 from prot.embeddings import AsyncVoyageEmbedder
 from prot.graphrag import GraphRAGStore
 from prot.log import get_logger
+from prot.processing import content_to_text
 
 logger = get_logger(__name__)
-
-
-def _content_to_text(content) -> str:
-    """Extract plain text from str or list of content blocks."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(
-            block.text if hasattr(block, "text") else
-            str(block.get("text", "") or block.get("content", "")) if isinstance(block, dict) else ""
-            for block in content
-        )
-    return str(content)
 
 
 EXTRACTION_PROMPT = """Extract entities and relationships from this conversation.
@@ -67,7 +55,7 @@ class MemoryExtractor:
         """Use Haiku 4.5 to extract entities and relationships from conversation."""
         logger.info("Extracting", messages=len(messages))
         conversation_text = "\n".join(
-            f"{m['role']}: {_content_to_text(m['content'])}" for m in messages
+            f"{m['role']}: {content_to_text(m['content'])}" for m in messages
         )
         response = await self._llm.messages.create(
             model=settings.memory_extraction_model,

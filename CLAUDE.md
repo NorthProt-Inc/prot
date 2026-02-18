@@ -41,12 +41,11 @@ src/prot/
   conversation_log.py  # Daily JSONL conversation logger (data/conversations/)
   log.py           # Legacy logging compat
   schema.sql       # PostgreSQL schema (auto-applied on startup)
-  logging/         # Structured logging subsystem (7 modules)
+  logging/         # Structured logging subsystem (6 modules)
     setup.py           # Logger configuration
     structured_logger.py  # StructuredLogger class
     formatters.py      # Log formatters
     handlers.py        # Log handlers
-    decorator.py       # @log_operation observability decorator
     constants.py       # Log field constants
 ```
 

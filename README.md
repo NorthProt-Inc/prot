@@ -14,7 +14,7 @@ Real-time voice conversation system with the Axel persona — a streaming audio 
 - **Home Assistant integration** — Tool-use loop for smart home control (get_state, call_service)
 - **Web search** — Built-in web search tool via Claude API
 - **Agentic tool loop** — Multi-iteration tool execution with up to 3 rounds per response
-- **Structured logging** — Modular logging subsystem with structured formatters, handlers, and observability decorators
+- **Structured logging** — Modular logging subsystem with structured formatters, handlers, and turn-scoped timers
 
 ---
 
@@ -62,12 +62,12 @@ stateDiagram-v2
 ### Source Layout
 
 ```
-src/prot/              # Core application (22 modules)
-  logging/             # Structured logging subsystem (7 modules)
-tests/                 # 27 test files
+src/prot/              # Core application
+  logging/             # Structured logging subsystem (6 modules)
+tests/                 # Unit & integration tests
 deploy/                # systemd service files
 scripts/               # Dev launcher (run.sh)
-docs/plans/            # Architectural decision documents
+docs/                  # Persona config & architecture diagrams
 ```
 
 ---
@@ -143,7 +143,7 @@ systemctl --user enable --now prot
 | `DATABASE_URL` | No | `postgresql://prot:prot@localhost:5432/prot` | PostgreSQL connection string |
 | `HASS_URL` | No | `http://localhost:8123` | Home Assistant URL |
 | `HASS_TOKEN` | No | — | Home Assistant long-lived access token |
-| `MIC_DEVICE_INDEX` | No | `11` | PyAudio input device index |
+| `MIC_DEVICE_INDEX` | No | (system default) | PyAudio input device index |
 | `CLAUDE_MODEL` | No | `claude-opus-4-6` | Claude model ID |
 | `CLAUDE_MAX_TOKENS` | No | `1500` | Claude max output tokens |
 | `CLAUDE_EFFORT` | No | `medium` | Claude thinking effort (low/medium/high) |
