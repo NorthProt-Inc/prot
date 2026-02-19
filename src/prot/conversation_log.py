@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from prot.log import get_logger
+from prot.logging import get_logger
 from prot.processing import content_to_text
 
 logger = get_logger(__name__)

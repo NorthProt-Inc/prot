@@ -17,7 +17,7 @@ from prot.state import State, StateMachine
 from prot.stt import STTClient
 from prot.tts import TTSClient
 from prot.vad import VADProcessor
-from prot.log import get_logger, start_turn, reset_turn, logged
+from prot.logging import get_logger, start_turn, reset_turn, logged
 
 logger = get_logger(__name__)
 

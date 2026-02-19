@@ -10,7 +10,7 @@ from anthropic import AsyncAnthropic
 from prot.config import settings
 from prot.embeddings import AsyncVoyageEmbedder
 from prot.graphrag import GraphRAGStore
-from prot.log import get_logger, logged
+from prot.logging import get_logger, logged
 from prot.processing import content_to_text
 
 logger = get_logger(__name__)

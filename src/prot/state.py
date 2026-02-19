@@ -1,6 +1,6 @@
 from enum import Enum
 
-from prot.log import get_logger
+from prot.logging import get_logger
 
 logger = get_logger(__name__)
 
