@@ -89,6 +89,24 @@ class TestAsyncVoyageEmbedder:
             assert isinstance(vectors, list)
             assert isinstance(vectors[0], list)
 
+    async def test_embed_query_contextual_uses_contextualized_embed(self):
+        mock_client = AsyncMock()
+        mock_inner = MagicMock()
+        mock_inner.embeddings = [[0.1] * 1024]
+        mock_result = MagicMock()
+        mock_result.results = [mock_inner]
+        mock_client.contextualized_embed.return_value = mock_result
+
+        with patch("prot.embeddings.voyageai.AsyncClient", return_value=mock_client):
+            embedder = AsyncVoyageEmbedder(api_key="test")
+            vector = await embedder.embed_query_contextual("search term")
+            assert len(vector) == 1024
+            mock_client.contextualized_embed.assert_called_once_with(
+                inputs=[["search term"]],
+                model="voyage-context-3",
+                input_type="query",
+            )
+
     async def test_semaphore_limits_concurrency(self):
         embedder = AsyncVoyageEmbedder.__new__(AsyncVoyageEmbedder)
         embedder._max_concurrent = 5

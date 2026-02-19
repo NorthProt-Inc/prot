@@ -86,7 +86,7 @@ class CommunityDetector:
                 continue
 
             summary = await self._summarize_community(member_entities)
-            embedding = await self._embedder.embed_texts([summary])
+            embedding = await self._embedder.embed_chunks_contextual([summary])
             communities.append({
                 "summary": summary,
                 "summary_embedding": embedding[0],

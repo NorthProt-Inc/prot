@@ -151,7 +151,7 @@ class TestRebuild:
             ],
         )
         mock_embedder = AsyncMock()
-        mock_embedder.embed_texts.return_value = [[0.1] * 1024]
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024]
 
         mock_anthropic = AsyncMock()
         mock_response = MagicMock()

@@ -138,7 +138,7 @@ class MemoryExtractor:
 
     async def pre_load_context(self, query: str) -> str:
         """Search GraphRAG (entities + neighbors + communities) and assemble Block 2 context."""
-        query_embedding = await self._embedder.embed_query(query)
+        query_embedding = await self._embedder.embed_query_contextual(query)
 
         parts: list[str] = []
         token_estimate = 0

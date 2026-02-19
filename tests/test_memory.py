@@ -88,7 +88,7 @@ class TestMemoryExtractor:
             {"summary": "Community about work", "similarity": 0.8},
         ]
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -184,7 +184,7 @@ class TestMemoryExtractor:
         mock_store.search_entities_semantic.return_value = []
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -252,7 +252,7 @@ class TestMemoryExtractor:
         mock_store.get_entity_neighbors.return_value = []
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -303,7 +303,7 @@ class TestMemoryExtractor:
         mock_store.get_entity_neighbors.return_value = []
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         mock_reranker = AsyncMock()
         # Reranker returns a subset (top 2)
@@ -335,7 +335,7 @@ class TestMemoryExtractor:
         mock_store.get_entity_neighbors.return_value = []
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder,
@@ -444,7 +444,7 @@ class TestMemoryExtractorConcurrency:
         mock_store.get_entity_neighbors = mock_get_neighbors
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
