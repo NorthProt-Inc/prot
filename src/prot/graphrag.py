@@ -44,9 +44,8 @@ class GraphRAGStore:
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (namespace, name)
                 DO UPDATE SET description = CASE
-                    WHEN entities.description = '' THEN EXCLUDED.description
-                    WHEN POSITION(EXCLUDED.description IN entities.description) > 0 THEN entities.description
-                    ELSE LEFT(entities.description || E'\n' || EXCLUDED.description, 500)
+                    WHEN EXCLUDED.description = '' THEN entities.description
+                    ELSE EXCLUDED.description
                     END,
                              mention_count = entities.mention_count + 1,
                              name_embedding = COALESCE(EXCLUDED.name_embedding, entities.name_embedding),
