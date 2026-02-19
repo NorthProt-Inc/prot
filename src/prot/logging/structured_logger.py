@@ -42,10 +42,6 @@ class StructuredLogger:
     def __init__(self, logger: logging.Logger) -> None:
         self._logger = logger
 
-    @property
-    def name(self) -> str:
-        return self._logger.name
-
     def _log(self, level: int, msg: str, args: tuple, kwargs: dict) -> None:
         if not self._logger.isEnabledFor(level):
             return
@@ -74,9 +70,6 @@ class StructuredLogger:
 
     def error(self, msg: str, *args, **kwargs) -> None:
         self._log(logging.ERROR, msg, args, kwargs)
-
-    def critical(self, msg: str, *args, **kwargs) -> None:
-        self._log(logging.CRITICAL, msg, args, kwargs)
 
     def exception(self, msg: str, *args, **kwargs) -> None:
         kwargs["exc_info"] = kwargs.get("exc_info", True)

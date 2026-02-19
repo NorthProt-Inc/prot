@@ -10,7 +10,6 @@ class LLMClient:
     def __init__(self, api_key: str | None = None):
         self._client = AsyncAnthropic(api_key=api_key or settings.anthropic_api_key)
         self._cancelled = False
-        self._active_stream = None
         self._last_response_content = None
 
     @logged(slow_ms=2000, log_args=True)
@@ -42,15 +41,12 @@ class LLMClient:
             #     "edits": [{"type": "compact_20260112"}],
             # },
         ) as stream:
-            self._active_stream = stream
             async for event in stream:
                 if self._cancelled:
                     break
                 if event.type == "content_block_delta":
                     if hasattr(event.delta, "text"):
                         yield event.delta.text
-
-        self._active_stream = None
 
         try:
             final = await stream.get_final_message()
@@ -75,6 +71,7 @@ class LLMClient:
 
     async def close(self) -> None:
         """Close persistent HTTP clients."""
+        await self._client.close()
 
     async def execute_tool(self, tool_name: str, tool_input: dict) -> dict:
         """Execute a tool call from Claude. Returns tool result."""
