@@ -22,8 +22,8 @@ uv run uvicorn prot.app:app --host 0.0.0.0 --port 8000 --reload  # Manual dev se
 src/prot/
   app.py           # FastAPI app, lifespan, HTTP endpoints (/health, /state, /diagnostics)
   pipeline.py      # Main voice pipeline orchestrator (run_pipeline)
-  state.py         # 6-state FSM (IDLE→LISTENING→PROCESSING→SPEAKING→ACTIVE→INTERRUPTED)
-  config.py        # Pydantic Settings — all env vars
+  state.py         # 6-state FSM (IDLE→LISTENING→PROCESSING→SPEAKING→ACTIVE→INTERRUPTED) + force_recovery()
+  config.py        # Pydantic Settings — all env vars + LOCAL_TZ constant
   audio.py         # PyAudio microphone capture
   vad.py           # Silero VAD speech detection
   stt.py           # ElevenLabs Scribe v2 (WebSocket realtime STT)
@@ -37,11 +37,10 @@ src/prot/
   memory.py        # Background memory extraction + RAG context retrieval
   graphrag.py      # pgvector-backed entity/relationship/community storage
   community.py     # Louvain community detection + LLM summarization
-  embeddings.py    # Voyage AI embeddings (voyage-4, voyage-context-3 contextual)
+  embeddings.py    # Voyage AI contextual embeddings (voyage-context-3 only)
   reranker.py      # Voyage AI reranker (rerank-2.5)
   db.py            # asyncpg connection pool + schema init + CSV export on shutdown
   conversation_log.py  # Daily JSONL conversation logger (data/conversations/)
-  log.py           # Legacy logging compat
   schema.sql       # PostgreSQL schema (auto-applied on startup)
   logging/         # Structured logging subsystem
     setup.py           # Logger configuration
@@ -56,6 +55,7 @@ src/prot/
 
 - **Async-first**: All pipeline stages are async. Use `asyncio.create_task` for background work.
 - **State machine**: Transitions go through `StateMachine.transition()`. Never set state directly.
+  Error recovery uses `StateMachine.force_recovery()` — the only sanctioned escape hatch (logs warning).
 - **Barge-in**: During SPEAKING, VAD uses higher threshold (`VAD_THRESHOLD_SPEAKING=0.8`).
   Detection triggers INTERRUPTED state and TTS cancellation.
 - **Tool loop**: LLM supports up to 3 tool-use rounds per response (Home Assistant, web search).

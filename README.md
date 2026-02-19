@@ -35,7 +35,7 @@ graph TD
     TOOLS -->|tool_result| LLM
 
     LLM -->|background| MEM[Memory Extractor]
-    MEM --> EMB[Voyage AI<br/>voyage-4]
+    MEM --> EMB[Voyage AI<br/>voyage-context-3]
     EMB --> DB[(PostgreSQL<br/>pgvector)]
     MEM -->|every 5 extractions| COMM[Community Detector<br/>Louvain]
     COMM --> EMB
@@ -140,7 +140,6 @@ systemctl --user enable --now prot
 | `ELEVENLABS_OUTPUT_FORMAT` | No | `pcm_24000` | TTS output audio format |
 | `VOYAGE_API_KEY` | No | — | Voyage AI API key for embeddings |
 | `VOYAGE_MODEL` | No | `voyage-4` | Voyage embedding model |
-| `VOYAGE_DIMENSION` | No | `1024` | Embedding vector dimension |
 | `VOYAGE_CONTEXT_MODEL` | No | `voyage-context-3` | Contextual embedding model |
 | `RERANK_MODEL` | No | `rerank-2.5` | Voyage reranker model |
 | `RERANK_TOP_K` | No | `5` | Reranker top-K results |
