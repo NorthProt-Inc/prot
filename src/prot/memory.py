@@ -38,11 +38,13 @@ class MemoryExtractor:
         store: GraphRAGStore | None = None,
         embedder: AsyncVoyageEmbedder | None = None,
         community_detector=None,
+        reranker=None,
     ):
         self._llm = AsyncAnthropic(api_key=anthropic_key or settings.anthropic_api_key)
         self._store = store
         self._embedder = embedder
         self._community_detector = community_detector
+        self._reranker = reranker
         self._extraction_count: int = 0
 
     async def close(self) -> None:
@@ -50,6 +52,8 @@ class MemoryExtractor:
         await self._llm.close()
         if self._community_detector:
             await self._community_detector.close()
+        if self._reranker:
+            await self._reranker.close()
 
     @logged(slow_ms=3000)
     async def extract_from_conversation(self, messages: list[dict]) -> dict:
@@ -149,8 +153,16 @@ class MemoryExtractor:
 
         # 1. Entity semantic search + neighbor traversal (concurrent)
         entities = await self._store.search_entities_semantic(
-            query_embedding=query_embedding, top_k=5,
+            query_embedding=query_embedding, top_k=settings.rag_top_k,
         )
+
+        # Rerank entities if reranker available
+        if self._reranker and len(entities) > 1:
+            entities = await self._reranker.rerank(
+                query=query, items=entities, text_key="description",
+                top_k=settings.rerank_top_k,
+            )
+
         neighbor_lists = await asyncio.gather(*(
             self._store.get_entity_neighbors(entity["id"], max_depth=1)
             for entity in entities

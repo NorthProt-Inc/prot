@@ -274,6 +274,61 @@ class TestMemoryExtractor:
             assert result == {"entities": [], "relationships": []}
             mock_logger.warning.assert_called_once()
 
+    async def test_pre_load_context_uses_reranker(self):
+        """Verify reranker.rerank is called after semantic search with correct args."""
+        mock_store = AsyncMock()
+        entities = [
+            {"id": "e1", "name": "Bob", "entity_type": "person", "description": "A friend"},
+            {"id": "e2", "name": "Alice", "entity_type": "person", "description": "A colleague"},
+            {"id": "e3", "name": "Carol", "entity_type": "person", "description": "A neighbor"},
+        ]
+        mock_store.search_entities_semantic.return_value = entities
+        mock_store.get_entity_neighbors.return_value = []
+        mock_store.search_communities.return_value = []
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_query.return_value = [0.1] * 1024
+
+        mock_reranker = AsyncMock()
+        # Reranker returns a subset (top 2)
+        reranked = [entities[1], entities[0]]
+        mock_reranker.rerank.return_value = reranked
+
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=mock_store, embedder=mock_embedder,
+            reranker=mock_reranker,
+        )
+        text = await extractor.pre_load_context("Tell me about colleagues")
+
+        mock_reranker.rerank.assert_called_once_with(
+            query="Tell me about colleagues",
+            items=entities,
+            text_key="description",
+            top_k=5,  # settings.rerank_top_k default
+        )
+        # Output should reflect reranked order (Alice first)
+        assert "Alice" in text
+
+    async def test_pre_load_context_works_without_reranker(self):
+        """Verify backward compatibility when no reranker is passed."""
+        mock_store = AsyncMock()
+        mock_store.search_entities_semantic.return_value = [
+            {"id": "e1", "name": "Bob", "entity_type": "person", "description": "A friend"},
+            {"id": "e2", "name": "Alice", "entity_type": "person", "description": "A colleague"},
+        ]
+        mock_store.get_entity_neighbors.return_value = []
+        mock_store.search_communities.return_value = []
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_query.return_value = [0.1] * 1024
+
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=mock_store, embedder=mock_embedder,
+        )
+        text = await extractor.pre_load_context("Tell me about friends")
+
+        # Should work without reranker, returning semantic search results directly
+        assert "Bob" in text
+        assert "Alice" in text
+
 class TestCommunityRebuildTrigger:
     async def test_rebuild_triggered_on_interval(self):
         mock_store, mock_conn = _make_store_with_conn()
