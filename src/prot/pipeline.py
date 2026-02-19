@@ -113,6 +113,13 @@ class Pipeline:
         except Exception:
             logger.warning("Memory subsystem not available")
 
+        # Seed known entities from DB
+        try:
+            if self._memory:
+                await self._memory.seed_known_entities()
+        except Exception:
+            logger.debug("Entity seed failed", exc_info=True)
+
         # Pre-load RAG context
         try:
             if self._memory:
@@ -444,7 +451,7 @@ class Pipeline:
         async def _extract() -> None:
             try:
                 messages = self._ctx.get_messages()
-                extraction = await self._memory.extract_from_conversation(messages)
+                extraction = await self._memory.extract_incremental(messages)
                 await self._memory.save_extraction(extraction)
 
                 # Refresh RAG context

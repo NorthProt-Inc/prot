@@ -88,7 +88,7 @@ class TestMemoryExtractor:
             {"summary": "Community about work", "similarity": 0.8},
         ]
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -184,7 +184,7 @@ class TestMemoryExtractor:
         mock_store.search_entities_semantic.return_value = []
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -252,7 +252,7 @@ class TestMemoryExtractor:
         mock_store.get_entity_neighbors.return_value = []
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -303,7 +303,7 @@ class TestMemoryExtractor:
         mock_store.get_entity_neighbors.return_value = []
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         mock_reranker = AsyncMock()
         # Reranker returns a subset (top 2)
@@ -335,7 +335,7 @@ class TestMemoryExtractor:
         mock_store.get_entity_neighbors.return_value = []
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder,
@@ -444,7 +444,7 @@ class TestMemoryExtractorConcurrency:
         mock_store.get_entity_neighbors = mock_get_neighbors
         mock_store.search_communities.return_value = []
         mock_embedder = AsyncMock()
-        mock_embedder.embed_query.return_value = [0.1] * 1024
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -463,3 +463,127 @@ class TestMemoryExtractorConcurrency:
         # Results should still be in output
         assert "Entity0" in text
         assert "Neighbor-of-e0" in text
+
+
+@pytest.mark.asyncio
+class TestIncrementalExtraction:
+    async def test_extract_incremental_sends_only_recent_messages(self):
+        """Verify only the last window_size messages are extracted."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"entities": [], "relationships": []}')]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
+             patch("prot.memory.settings") as mock_settings:
+            mock_settings.memory_extraction_model = "test-model"
+            mock_settings.memory_extraction_window_turns = 2  # 4 messages
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            messages = [
+                {"role": "user", "content": f"msg{i}"}
+                for i in range(10)
+            ]
+            await extractor.extract_incremental(messages)
+
+            # Should only send last 4 messages (2 turns * 2)
+            call_args = mock_anthropic.messages.create.call_args
+            sent_text = call_args.kwargs["messages"][0]["content"]
+            assert "msg6" in sent_text
+            assert "msg9" in sent_text
+            assert "msg0" not in sent_text
+
+    async def test_extract_incremental_includes_known_entities(self):
+        """Verify known entities are passed to extraction prompt."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"entities": [], "relationships": []}')]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
+             patch("prot.memory.settings") as mock_settings:
+            mock_settings.memory_extraction_model = "test-model"
+            mock_settings.memory_extraction_window_turns = 3
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            extractor._known_entities = {"Alice", "Bob"}
+            messages = [{"role": "user", "content": "hello"}]
+            await extractor.extract_incremental(messages)
+
+            call_args = mock_anthropic.messages.create.call_args
+            system = call_args.kwargs["system"]
+            assert "Alice" in system
+            assert "Bob" in system
+
+    async def test_extract_incremental_advances_pointer(self):
+        """Verify _last_extracted_index advances after extraction."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"entities": [], "relationships": []}')]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
+             patch("prot.memory.settings") as mock_settings:
+            mock_settings.memory_extraction_model = "test-model"
+            mock_settings.memory_extraction_window_turns = 3
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            assert extractor._last_extracted_index == 0
+            messages = [{"role": "user", "content": "hello"}] * 5
+            await extractor.extract_incremental(messages)
+            assert extractor._last_extracted_index == 5
+
+    async def test_extract_incremental_empty_when_no_new_messages(self):
+        """Verify empty result when all messages already extracted."""
+        mock_anthropic = AsyncMock()
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic):
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            extractor._last_extracted_index = 10
+            messages = [{"role": "user", "content": "hello"}] * 10
+            result = await extractor.extract_incremental(messages)
+            assert result == {"entities": [], "relationships": []}
+            mock_anthropic.messages.create.assert_not_called()
+
+    async def test_save_extraction_tracks_known_entities(self):
+        """Verify entity names are added to _known_entities after save."""
+        mock_store, mock_conn = _make_store_with_conn()
+        mock_store.upsert_entity.return_value = "fake-uuid"
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024, [0.2] * 1024]
+
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=mock_store, embedder=mock_embedder
+        )
+        assert len(extractor._known_entities) == 0
+        await extractor.save_extraction({
+            "entities": [
+                {"name": "Bob", "type": "person", "description": "A friend"},
+                {"name": "Alice", "type": "person", "description": "A colleague"},
+            ],
+            "relationships": [],
+        })
+        assert extractor._known_entities == {"Bob", "Alice"}
+
+    async def test_seed_known_entities_from_db(self):
+        """Verify seed_known_entities loads names from store."""
+        mock_store = AsyncMock()
+        mock_store.get_entity_names.return_value = ["Bob", "Alice", "Carol"]
+
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=mock_store, embedder=AsyncMock()
+        )
+        await extractor.seed_known_entities()
+        assert extractor._known_entities == {"Bob", "Alice", "Carol"}
+
+    async def test_seed_known_entities_skips_without_store(self):
+        """Verify seed_known_entities does nothing without a store."""
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=None, embedder=AsyncMock()
+        )
+        await extractor.seed_known_entities()
+        assert extractor._known_entities == set()

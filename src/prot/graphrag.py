@@ -30,7 +30,11 @@ class GraphRAGStore:
         query = """INSERT INTO entities (namespace, name, entity_type, description, name_embedding)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (namespace, name)
-                DO UPDATE SET description = EXCLUDED.description,
+                DO UPDATE SET description = CASE
+                    WHEN entities.description = '' THEN EXCLUDED.description
+                    WHEN POSITION(EXCLUDED.description IN entities.description) > 0 THEN entities.description
+                    ELSE LEFT(entities.description || E'\n' || EXCLUDED.description, 500)
+                    END,
                              mention_count = entities.mention_count + 1,
                              name_embedding = COALESCE(EXCLUDED.name_embedding, entities.name_embedding),
                              updated_at = now()
@@ -67,6 +71,15 @@ class GraphRAGStore:
         async with self._pool.acquire() as c:
             row = await c.fetchrow(query, *args)
             return row["id"]
+
+    async def get_entity_names(self, namespace: str = "default") -> list[str]:
+        """Return all entity names ordered by mention count."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT name FROM entities WHERE namespace = $1 ORDER BY mention_count DESC",
+                namespace,
+            )
+            return [r["name"] for r in rows]
 
     async def search_entities_semantic(
         self, query_embedding: list[float], top_k: int = 10
