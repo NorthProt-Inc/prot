@@ -4,7 +4,7 @@ import httpx
 from elevenlabs import AsyncElevenLabs, VoiceSettings
 
 from prot.config import settings
-from prot.log import get_logger, logged
+from prot.logging import get_logger, logged
 
 logger = get_logger(__name__)
 

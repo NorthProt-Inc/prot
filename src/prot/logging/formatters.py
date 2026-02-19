@@ -10,6 +10,38 @@ from prot.logging.constants import (
 )
 
 
+def _prepare_record(record: logging.LogRecord) -> tuple[list[str], str]:
+    """Extract trace metadata from record and build shared kv_parts + indent.
+
+    Pops ``_depth``, ``_trace_dir``, and ``_elapsed`` from ``extra_data`` so
+    they don't appear as plain k=v output.  Returns ``(kv_parts, indent)``
+    ready for both colored and plain line assembly.
+    """
+    extra_data: dict = getattr(record, "extra_data", {})
+
+    # Extract trace metadata (pop to keep out of k=v output)
+    trace_depth = extra_data.pop("_depth", None)
+    extra_data.pop("_trace_dir", None)
+    trace_elapsed = extra_data.pop("_elapsed", None)
+
+    kv_parts = [f"{k}={v}" for k, v in extra_data.items()]
+
+    if trace_elapsed:
+        kv_parts.append(trace_elapsed)
+    else:
+        elapsed = getattr(record, "elapsed_ms", None)
+        if elapsed is not None:
+            if elapsed >= 1000:
+                kv_parts.append(f"+{elapsed / 1000:.1f}s")
+            else:
+                kv_parts.append(f"+{elapsed}ms")
+
+    # Call-depth indent for trace messages
+    indent = f"{'| ' * trace_depth}" if trace_depth is not None else ""
+
+    return kv_parts, indent
+
+
 class SmartFormatter(logging.Formatter):
     """Console formatter: colored output with k=v pairs and elapsed time."""
 
@@ -22,30 +54,9 @@ class SmartFormatter(logging.Formatter):
         abbrev, color = MODULE_MAP.get(mod, (mod[:3].upper(), "\033[37m"))
         level_color = LEVEL_COLORS.get(record.levelname, "")
 
-        extra_data: dict = getattr(record, "extra_data", {})
-
-        # Extract trace metadata (pop to keep out of k=v output)
-        trace_depth = extra_data.pop("_depth", None)
-        extra_data.pop("_trace_dir", None)
-        trace_elapsed = extra_data.pop("_elapsed", None)
-
-        kv_parts = [f"{k}={v}" for k, v in extra_data.items()]
-
-        if trace_elapsed:
-            kv_parts.append(trace_elapsed)
-        else:
-            elapsed = getattr(record, "elapsed_ms", None)
-            if elapsed is not None:
-                if elapsed >= 1000:
-                    kv_parts.append(f"+{elapsed / 1000:.1f}s")
-                else:
-                    kv_parts.append(f"+{elapsed}ms")
-
+        kv_parts, indent = _prepare_record(record)
         kv_str = f" {DIM}| {' '.join(kv_parts)}{RESET}" if kv_parts else ""
         msg = record.getMessage()
-
-        # Add call-depth indent for trace messages
-        indent = f"{'| ' * trace_depth}" if trace_depth is not None else ""
 
         line = (
             f"{DIM}{timestamp}{RESET}  "
@@ -69,30 +80,10 @@ class PlainFormatter(logging.Formatter):
         timestamp = dt.strftime("%Y-%m-%d %H:%M:%S.") + f"{int(record.created * 1000) % 1000:03d}"
 
         mod = module_key(record.name)
-        extra_data: dict = getattr(record, "extra_data", {})
 
-        # Extract trace metadata (pop to keep out of k=v output)
-        trace_depth = extra_data.pop("_depth", None)
-        extra_data.pop("_trace_dir", None)
-        trace_elapsed = extra_data.pop("_elapsed", None)
-
-        kv_parts = [f"{k}={v}" for k, v in extra_data.items()]
-
-        if trace_elapsed:
-            kv_parts.append(trace_elapsed)
-        else:
-            elapsed = getattr(record, "elapsed_ms", None)
-            if elapsed is not None:
-                if elapsed >= 1000:
-                    kv_parts.append(f"+{elapsed / 1000:.1f}s")
-                else:
-                    kv_parts.append(f"+{elapsed}ms")
-
+        kv_parts, indent = _prepare_record(record)
         kv_str = f" | {' '.join(kv_parts)}" if kv_parts else ""
         msg = record.getMessage()
-
-        # Add call-depth indent for trace messages
-        indent = f"{'| ' * trace_depth}" if trace_depth is not None else ""
 
         line = f"{timestamp} {record.levelname:<8} [{mod}] {indent}{msg}{kv_str}"
 

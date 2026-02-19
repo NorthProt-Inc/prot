@@ -74,7 +74,6 @@ class TestMemoryExtractor:
         })
         mock_embedder.embed_texts_contextual.assert_called_once_with(["A friend"])
         mock_embedder.embed_chunks_contextual.assert_not_called()
-        mock_embedder.embed_texts.assert_not_called()
 
     async def test_pre_load_context_returns_text(self):
         mock_store = AsyncMock()
@@ -512,7 +511,7 @@ class TestMemoryExtractorConcurrency:
 
         call_order = []
 
-        async def mock_get_neighbors(entity_id, max_depth=1):
+        async def mock_get_neighbors(entity_id):
             call_order.append(("start", entity_id))
             await asyncio.sleep(0.01)  # simulate DB latency
             call_order.append(("end", entity_id))

@@ -1,4 +1,8 @@
+from zoneinfo import ZoneInfo
+
 from pydantic_settings import BaseSettings
+
+LOCAL_TZ = ZoneInfo("America/Vancouver")
 
 
 class Settings(BaseSettings):
@@ -43,7 +47,6 @@ class Settings(BaseSettings):
     # Embeddings
     voyage_api_key: str = ""
     voyage_model: str = "voyage-4"
-    voyage_dimension: int = 1024
     voyage_context_model: str = "voyage-context-3"
 
     # Reranker

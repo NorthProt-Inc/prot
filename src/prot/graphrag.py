@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 import asyncpg
@@ -16,6 +18,17 @@ class GraphRAGStore:
     def acquire(self):
         """Acquire a connection from the pool (async context manager)."""
         return self._pool.acquire()
+
+    @asynccontextmanager
+    async def _conn(
+        self, conn: asyncpg.Connection | None = None,
+    ) -> AsyncIterator[asyncpg.Connection]:
+        """Yield *conn* if provided, otherwise acquire one from the pool."""
+        if conn is not None:
+            yield conn
+        else:
+            async with self._pool.acquire() as c:
+                yield c
 
     async def upsert_entity(
         self,
@@ -39,12 +52,8 @@ class GraphRAGStore:
                              name_embedding = COALESCE(EXCLUDED.name_embedding, entities.name_embedding),
                              updated_at = now()
                 RETURNING id"""
-        args = (namespace, name, entity_type, description, embedding)
-        if conn is not None:
-            row = await conn.fetchrow(query, *args)
-            return row["id"]
-        async with self._pool.acquire() as c:
-            row = await c.fetchrow(query, *args)
+        async with self._conn(conn) as c:
+            row = await c.fetchrow(query, namespace, name, entity_type, description, embedding)
             return row["id"]
 
     async def upsert_relationship(
@@ -64,12 +73,8 @@ class GraphRAGStore:
                              weight = EXCLUDED.weight,
                              updated_at = now()
                 RETURNING id"""
-        args = (source_id, target_id, relation_type, description, weight)
-        if conn is not None:
-            row = await conn.fetchrow(query, *args)
-            return row["id"]
-        async with self._pool.acquire() as c:
-            row = await c.fetchrow(query, *args)
+        async with self._conn(conn) as c:
+            row = await c.fetchrow(query, source_id, target_id, relation_type, description, weight)
             return row["id"]
 
     async def get_entity_id_by_name(
@@ -78,11 +83,8 @@ class GraphRAGStore:
     ) -> UUID | None:
         """Look up entity ID by name. Returns None if not found."""
         query = "SELECT id FROM entities WHERE namespace = $1 AND name = $2"
-        if conn is not None:
-            row = await conn.fetchrow(query, namespace, name)
-        else:
-            async with self._pool.acquire() as c:
-                row = await c.fetchrow(query, namespace, name)
+        async with self._conn(conn) as c:
+            row = await c.fetchrow(query, namespace, name)
         return row["id"] if row else None
 
     async def get_entity_names(self, namespace: str = "default") -> list[str]:
@@ -187,13 +189,9 @@ class GraphRAGStore:
             return row["cnt"]
 
     async def get_entity_neighbors(
-        self, entity_id: UUID, max_depth: int = 1
+        self, entity_id: UUID,
     ) -> list[dict]:
-        """Get neighboring entities with relationship info.
-
-        Note: Only depth=1 is supported. The max_depth parameter is
-        retained for API compatibility but ignored.
-        """
+        """Get neighboring entities with relationship info (depth-1 only)."""
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """

@@ -113,7 +113,7 @@ class TestHandleVadSpeech:
         p._sm.on_speech_detected()   # IDLE -> LISTENING
         p._sm.on_utterance_complete()  # -> PROCESSING
         p._sm.on_tts_started()         # -> SPEAKING
-        p._sm.on_tts_complete()        # -> ACTIVE
+        p._sm.try_on_tts_complete()        # -> ACTIVE
         assert p._sm.state == State.ACTIVE
 
         await p._handle_vad_speech()
@@ -368,7 +368,7 @@ class TestActiveTimeout:
         p._sm.on_speech_detected()
         p._sm.on_utterance_complete()
         p._sm.on_tts_started()
-        p._sm.on_tts_complete()
+        p._sm.try_on_tts_complete()
         assert p._sm.state == State.ACTIVE
 
         # Use a short timeout for testing — keep patch active while task runs
@@ -941,7 +941,7 @@ class TestExceptionRecovery:
         async def failing_stream(*a, **kw):
             yield "Hello"
             # Simulate: barge-in already happened, state is LISTENING
-            p._sm._state = State.LISTENING
+            p._sm.force_recovery(State.LISTENING)
             raise RuntimeError("Error after barge-in")
 
         p._llm.stream_response = failing_stream

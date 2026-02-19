@@ -1,5 +1,9 @@
 from enum import Enum
 
+from prot.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 class State(Enum):
     IDLE = "idle"
@@ -59,15 +63,23 @@ class StateMachine:
     def on_tts_started(self) -> None:
         self._transition(State.SPEAKING)
 
-    def on_tts_complete(self) -> None:
-        self._transition(State.ACTIVE)
-
     def try_on_tts_complete(self) -> bool:
         """SPEAKING -> ACTIVE, returns False if state changed (e.g., interrupted)."""
         if self._state == State.SPEAKING:
             self._state = State.ACTIVE
             return True
         return False
+
+    def force_recovery(self, target: State) -> None:
+        """Bypass FSM validation for error-recovery paths.
+
+        This is the designated escape hatch — logs a warning so every
+        forced transition stays visible in diagnostics.
+        """
+        logger.warning(
+            "Force recovery", current=self._state.value, target=target.value,
+        )
+        self._state = target
 
     def on_active_timeout(self) -> None:
         self._transition(State.IDLE)

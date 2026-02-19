@@ -17,7 +17,7 @@ from prot.state import State, StateMachine
 from prot.stt import STTClient
 from prot.tts import TTSClient
 from prot.vad import VADProcessor
-from prot.log import get_logger, start_turn, reset_turn, logged
+from prot.logging import get_logger, start_turn, reset_turn, logged
 
 logger = get_logger(__name__)
 
@@ -171,6 +171,29 @@ class Pipeline:
         except Exception:
             logger.exception("Error in audio chunk processing")
 
+
+    async def _reconnect_stt(self) -> bool:
+        """Drain prebuffer, reset VAD, connect STT, and flush pending audio.
+
+        Returns True on success, False if STT connection failed.
+        On failure the caller is responsible for state transitions;
+        this helper only cleans up pending audio and resets the turn.
+        """
+        self._pending_audio = self._vad.drain_prebuffer()
+        self._vad.reset()
+
+        await self._stt.connect()
+        if not self._stt.is_connected:
+            self._pending_audio.clear()
+            reset_turn()
+            return False
+
+        for chunk in self._pending_audio:
+            await self._stt.send_audio(chunk)
+        self._pending_audio.clear()
+        self._stt_connected = True
+        return True
+
     async def _handle_vad_speech(self) -> None:
         """VAD detected speech in IDLE/ACTIVE — transition and connect STT."""
         start_turn()
@@ -179,23 +202,10 @@ class Pipeline:
         self._current_transcript = ""
         self._stt_connected = False
 
-        # Drain ring buffer BEFORE reset (pre-trigger audio)
-        self._pending_audio = self._vad.drain_prebuffer()
-        self._vad.reset()
-
-        await self._stt.connect()
-        if not self._stt.is_connected:
+        if not await self._reconnect_stt():
             logger.warning("STT connect failed, falling back to IDLE")
-            self._sm._state = State.IDLE
-            self._pending_audio.clear()
-            reset_turn()
+            self._sm.force_recovery(State.IDLE)
             return
-
-        # Flush prebuffer + audio that arrived during connect
-        for chunk in self._pending_audio:
-            await self._stt.send_audio(chunk)
-        self._pending_audio.clear()
-        self._stt_connected = True
 
     async def _on_transcript(self, text: str, is_final: bool) -> None:
         """STT callback — store final transcript only."""
@@ -378,7 +388,7 @@ class Pipeline:
             logger.error("Tool loop fell through without resolution")
             reset_turn()
             if self._sm.state in (State.PROCESSING, State.SPEAKING):
-                self._sm._state = State.ACTIVE
+                self._sm.force_recovery(State.ACTIVE)
                 self._start_active_timeout()
 
         except Exception:
@@ -390,7 +400,7 @@ class Pipeline:
             # [FIX 6] State-aware recovery — only force ACTIVE from stuck states
             reset_turn()
             if self._sm.state in (State.PROCESSING, State.SPEAKING):
-                self._sm._state = State.ACTIVE
+                self._sm.force_recovery(State.ACTIVE)
                 self._start_active_timeout()
 
     async def _handle_barge_in(self) -> None:
@@ -404,21 +414,10 @@ class Pipeline:
         start_turn()
         self._current_transcript = ""
 
-        self._pending_audio = self._vad.drain_prebuffer()
-        self._vad.reset()
-
-        await self._stt.connect()
-        if not self._stt.is_connected:
+        if not await self._reconnect_stt():
             logger.warning("STT reconnect failed after barge-in, falling back to IDLE")
-            self._sm._state = State.IDLE
-            self._pending_audio.clear()
-            reset_turn()
+            self._sm.force_recovery(State.IDLE)
             return
-
-        for chunk in self._pending_audio:
-            await self._stt.send_audio(chunk)
-        self._pending_audio.clear()
-        self._stt_connected = True
 
     def _start_active_timeout(self) -> None:
         """Start timer to return to IDLE after active_timeout seconds."""
@@ -434,6 +433,13 @@ class Pipeline:
                 self._save_session_log()
 
         self._active_timeout_task = asyncio.create_task(_timeout())
+
+    def _bg(self, coro) -> asyncio.Task:
+        """Fire-and-forget a coroutine as a tracked background task."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def _extract_memories_bg(self) -> None:
         """Background task to extract and save memories — tracked for shutdown cleanup."""
@@ -454,9 +460,7 @@ class Pipeline:
             except Exception:
                 logger.warning("Memory extraction failed", exc_info=True)
 
-        task = asyncio.create_task(_extract())
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        self._bg(_extract())
 
     def _save_message_bg(self, role: str, content: str) -> None:
         """Persist a conversation message to DB in the background."""
@@ -471,9 +475,7 @@ class Pipeline:
             except Exception:
                 logger.debug("Message save failed", exc_info=True)
 
-        task = asyncio.create_task(_save())
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        self._bg(_save())
 
     def _save_session_log(self) -> None:
         """Save new conversation messages as JSONL and reset session."""

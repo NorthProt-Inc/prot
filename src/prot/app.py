@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from prot.audio import AudioManager
 from prot.config import settings
-from prot.log import get_logger, setup_logging
+from prot.logging import get_logger, setup_logging
 from prot.pipeline import Pipeline
 
 setup_logging()

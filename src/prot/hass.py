@@ -7,7 +7,7 @@ import re
 
 import httpx
 
-from prot.log import get_logger
+from prot.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -85,6 +85,11 @@ class HassRegistry:
         self._token = token
         self._client = httpx.AsyncClient(timeout=_HASS_TIMEOUT)
         self._entities: list[dict] = []
+
+    @property
+    def _known_ids(self) -> set[str]:
+        """Set of discovered entity IDs for validation."""
+        return {e["entity_id"] for e in self._entities}
 
     async def discover(self) -> None:
         """Fetch entities from HASS API. Called once at startup."""
@@ -183,8 +188,7 @@ class HassRegistry:
         entity_id = tool_input.get("entity_id", "")
         action = tool_input.get("action", "")
 
-        known_ids = {e["entity_id"] for e in self._entities}
-        if entity_id not in known_ids:
+        if entity_id not in self._known_ids:
             return {"error": f"Invalid entity_id: {entity_id}"}
 
         domain = entity_id.split(".", 1)[0]
@@ -246,8 +250,7 @@ class HassRegistry:
             if not entity_id:
                 return {"error": "entity_id is required for get_state"}
 
-            known_ids = {e["entity_id"] for e in self._entities}
-            if entity_id not in known_ids:
+            if entity_id not in self._known_ids:
                 return {"error": f"Invalid entity_id: {entity_id}"}
 
             headers = {"Authorization": f"Bearer {self._token}"}

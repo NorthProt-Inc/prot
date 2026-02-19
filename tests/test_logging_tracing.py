@@ -1,4 +1,4 @@
-"""Tests for prot.logging.tracing — @logged decorator."""
+"""Tests for prot.logging.tracing -- @logged decorator."""
 
 from __future__ import annotations
 
@@ -53,8 +53,8 @@ class TestFmtVal:
 
     def test_truncation(self):
         long_str = "x" * 200
-        result = _fmt_val(long_str, max_len=20)
-        assert len(result) == 20
+        result = _fmt_val(long_str)
+        assert len(result) == 80
         assert result.endswith("...")
 
     def test_short_value(self):
@@ -84,94 +84,11 @@ class TestFmtArgs:
         assert "x=1" in result
         assert "cls" not in result
 
-    def test_redact_secrets(self):
-        def fn(password, api_key, name):
-            pass
-        result = _fmt_args(fn, ("secret", "key123", "alice"), {}, redact=True)
-        assert "password=***" in result
-        assert "api_key=***" in result
-        assert "alice" in result
-
-    def test_redact_kwargs(self):
+    def test_kwargs(self):
         def fn():
             pass
-        result = _fmt_args(fn, (), {"token": "abc", "name": "bob"}, redact=True)
-        assert "token=***" in result
+        result = _fmt_args(fn, (), {"name": "bob"})
         assert "bob" in result
-
-    def test_no_redact(self):
-        def fn(password):
-            pass
-        result = _fmt_args(fn, ("secret",), {}, redact=False)
-        assert "'secret'" in result
-
-
-# ---------------------------------------------------------------------------
-# @logged on sync functions
-# ---------------------------------------------------------------------------
-
-class TestLoggedSync:
-    def test_sync_basic(self, monkeypatch):
-        _, records = _capture_logger(monkeypatch)
-
-        @logged()
-        def add(a, b):
-            return a + b
-
-        result = add(1, 2)
-        assert result == 3
-        assert any("->" in r["msg"] for r in records)
-        assert any("<-" in r["msg"] for r in records)
-
-    def test_sync_exception_restores_depth(self, monkeypatch):
-        _, records = _capture_logger(monkeypatch)
-
-        @logged()
-        def fail():
-            raise ValueError("boom")
-
-        assert _call_depth.get() == 0
-        with pytest.raises(ValueError, match="boom"):
-            fail()
-        assert _call_depth.get() == 0
-        assert any("FAILED" in r["msg"] for r in records)
-
-    def test_sync_slow_warning(self, monkeypatch):
-        _, records = _capture_logger(monkeypatch)
-        import time
-
-        @logged(slow_ms=1)
-        def slow_fn():
-            time.sleep(0.01)
-            return "done"
-
-        slow_fn()
-        assert any(
-            r["level"] == logging.WARNING and "SLOW" in r["msg"]
-            for r in records
-        )
-
-    def test_sync_log_args(self, monkeypatch):
-        _, records = _capture_logger(monkeypatch)
-
-        @logged(log_args=True)
-        def greet(name):
-            return f"hi {name}"
-
-        greet("alice")
-        entry = [r for r in records if "->" in r["msg"]][0]
-        assert "alice" in entry["msg"]
-
-    def test_sync_log_result(self, monkeypatch):
-        _, records = _capture_logger(monkeypatch)
-
-        @logged(log_result=True)
-        def compute():
-            return 42
-
-        compute()
-        exit_rec = [r for r in records if "<-" in r["msg"]][0]
-        assert "42" in exit_rec["msg"]
 
 
 # ---------------------------------------------------------------------------
@@ -274,22 +191,6 @@ class TestLoggedAsyncGen:
 # ---------------------------------------------------------------------------
 
 class TestCallDepth:
-    def test_nested_depth(self, monkeypatch):
-        _, records = _capture_logger(monkeypatch)
-
-        @logged()
-        def outer():
-            inner()
-
-        @logged()
-        def inner():
-            pass
-
-        outer()
-        # outer entry at depth 0, inner entry at depth 1
-        depths = [r["extra"].get("_depth") for r in records if "->" in r["msg"]]
-        assert depths == [0, 1]
-
     async def test_nested_async_depth(self, monkeypatch):
         _, records = _capture_logger(monkeypatch)
 
@@ -311,28 +212,6 @@ class TestCallDepth:
 # ---------------------------------------------------------------------------
 
 class TestZeroCost:
-    def test_disabled_level_sync(self, monkeypatch):
-        """When level is disabled, original function is called directly."""
-        call_count = 0
-
-        class DisabledLogger:
-            def isEnabledFor(self, level):
-                return False
-
-            def _log(self, *args, **kwargs):
-                nonlocal call_count
-                call_count += 1
-
-        monkeypatch.setattr("prot.logging.tracing.get_logger", lambda name: DisabledLogger())
-
-        @logged()
-        def add(a, b):
-            return a + b
-
-        result = add(1, 2)
-        assert result == 3
-        assert call_count == 0  # No log calls made
-
     async def test_disabled_level_async(self, monkeypatch):
         call_count = 0
 
@@ -382,18 +261,33 @@ class TestZeroCost:
 # ---------------------------------------------------------------------------
 
 class TestMethodSelfSkip:
-    def test_self_not_logged(self, monkeypatch):
+    async def test_self_not_logged(self, monkeypatch):
         _, records = _capture_logger(monkeypatch)
 
         class MyService:
             @logged(log_args=True)
-            def do_work(self, x):
+            async def do_work(self, x):
                 return x * 2
 
         svc = MyService()
-        svc.do_work(5)
+        result = await svc.do_work(5)
+        assert result == 10
         entry = [r for r in records if "->" in r["msg"]][0]
         # Extract args portion from "-> qualname(args)"
         args_part = entry["msg"].split("(", 1)[1] if "(" in entry["msg"] else ""
         assert "self=" not in args_part
         assert "x=5" in args_part
+
+
+# ---------------------------------------------------------------------------
+# Sync function rejection
+# ---------------------------------------------------------------------------
+
+class TestSyncRejection:
+    def test_sync_raises_type_error(self, monkeypatch):
+        _capture_logger(monkeypatch)
+
+        with pytest.raises(TypeError, match="only supports async"):
+            @logged()
+            def sync_fn():
+                return 42
