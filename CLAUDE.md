@@ -36,7 +36,8 @@ src/prot/
   memory.py        # Background memory extraction + RAG context retrieval
   graphrag.py      # Entity/relationship extraction via Haiku 4.5
   community.py     # Louvain community detection + LLM summarization
-  embeddings.py    # Voyage AI embeddings (voyage-4-lite)
+  embeddings.py    # Voyage AI embeddings (voyage-4, voyage-context-3 contextual)
+  reranker.py      # Voyage AI reranker (rerank-2.5)
   db.py            # asyncpg connection pool + schema init + CSV export on shutdown
   conversation_log.py  # Daily JSONL conversation logger (data/conversations/)
   log.py           # Legacy logging compat
@@ -62,7 +63,10 @@ src/prot/
   Full history preserved via `get_messages()` for session logging and memory extraction.
   Window boundary skips orphaned tool_result messages to maintain valid conversation flow.
 - **Memory extraction**: Runs in background after each exchange. Uses Haiku 4.5 for entity/relationship extraction.
+  Contextual embeddings (voyage-context-3) for document-aware entity storage. Reranker (rerank-2.5) refines RAG results.
   Community detection triggers every 5 extractions via CommunityDetector (Louvain clustering).
+- **Reranker**: RAG retrieval uses Voyage rerank-2.5 to re-score candidate results before context injection.
+  Improves relevance of memory recall without increasing embedding dimensionality.
 - **DB optional**: App works without PostgreSQL — memory/RAG features gracefully degrade.
 - **GA API**: Uses `messages.stream()` (not beta). Adaptive thinking + effort are GA on Sonnet 4.6.
 
