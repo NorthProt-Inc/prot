@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from prot.config import LOCAL_TZ
+from prot.processing import is_tool_result_message
 
 
 class ContextManager:
@@ -92,13 +93,7 @@ class ContextManager:
         messages = self._messages[-max_messages:]
         while messages and (
             messages[0]["role"] != "user"
-            or (
-                isinstance(messages[0]["content"], list)
-                and any(
-                    isinstance(b, dict) and b.get("type") == "tool_result"
-                    for b in messages[0]["content"]
-                )
-            )
+            or is_tool_result_message(messages[0])
         ):
             messages = messages[1:]
         return messages

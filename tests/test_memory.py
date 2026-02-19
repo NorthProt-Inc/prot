@@ -549,8 +549,8 @@ class TestMemoryExtractorConcurrency:
 
 @pytest.mark.asyncio
 class TestIncrementalExtraction:
-    async def test_extract_incremental_sends_only_recent_messages(self):
-        """Verify only the last window_size messages are extracted."""
+    async def test_extract_incremental_sends_all_unprocessed(self):
+        """Verify all unprocessed messages are extracted (no window cap)."""
         mock_anthropic = AsyncMock()
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text='{"entities": [], "relationships": []}')]
@@ -559,7 +559,6 @@ class TestIncrementalExtraction:
         with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
              patch("prot.memory.settings") as mock_settings:
             mock_settings.memory_extraction_model = "test-model"
-            mock_settings.memory_extraction_window_turns = 2  # 4 messages
             extractor = MemoryExtractor(
                 anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
             )
@@ -569,15 +568,14 @@ class TestIncrementalExtraction:
             ]
             await extractor.extract_incremental(messages)
 
-            # Should only send last 4 messages (2 turns * 2)
+            # All messages should be sent (no window cap)
             call_args = mock_anthropic.messages.create.call_args
             sent_text = call_args.kwargs["messages"][0]["content"]
-            assert "msg6" in sent_text
+            assert "msg0" in sent_text
             assert "msg9" in sent_text
-            assert "msg0" not in sent_text
 
     async def test_extract_incremental_includes_known_entities(self):
-        """Verify known entities are passed to extraction prompt."""
+        """Verify known entities are passed as a separate system block."""
         mock_anthropic = AsyncMock()
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text='{"entities": [], "relationships": []}')]
@@ -586,7 +584,6 @@ class TestIncrementalExtraction:
         with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
              patch("prot.memory.settings") as mock_settings:
             mock_settings.memory_extraction_model = "test-model"
-            mock_settings.memory_extraction_window_turns = 3
             extractor = MemoryExtractor(
                 anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
             )
@@ -595,9 +592,12 @@ class TestIncrementalExtraction:
             await extractor.extract_incremental(messages)
 
             call_args = mock_anthropic.messages.create.call_args
-            system = call_args.kwargs["system"]
-            assert "Alice" in system
-            assert "Bob" in system
+            system_blocks = call_args.kwargs["system"]
+            assert isinstance(system_blocks, list)
+            assert len(system_blocks) == 2  # base + known entities
+            known_block_text = system_blocks[1]["text"]
+            assert "Alice" in known_block_text
+            assert "Bob" in known_block_text
 
     async def test_extract_incremental_advances_pointer(self):
         """Verify _last_extracted_index advances after extraction."""
@@ -609,7 +609,6 @@ class TestIncrementalExtraction:
         with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
              patch("prot.memory.settings") as mock_settings:
             mock_settings.memory_extraction_model = "test-model"
-            mock_settings.memory_extraction_window_turns = 3
             extractor = MemoryExtractor(
                 anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
             )
@@ -669,3 +668,79 @@ class TestIncrementalExtraction:
         )
         await extractor.seed_known_entities()
         assert extractor._known_entities == set()
+
+    async def test_extract_incremental_filters_tool_result_messages(self):
+        """Verify tool_result messages are filtered before extraction."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"entities": [], "relationships": []}')]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
+             patch("prot.memory.settings") as mock_settings:
+            mock_settings.memory_extraction_model = "test-model"
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            messages = [
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+                ]},
+                {"role": "assistant", "content": "tool done"},
+                {"role": "user", "content": "thanks"},
+            ]
+            await extractor.extract_incremental(messages)
+
+            call_args = mock_anthropic.messages.create.call_args
+            sent_text = call_args.kwargs["messages"][0]["content"]
+            assert "tool_result" not in sent_text
+            assert "hello" in sent_text
+            assert "thanks" in sent_text
+
+    async def test_extract_uses_cache_blocks(self):
+        """Verify system param is a list of blocks with cache_control."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"entities": [], "relationships": []}')]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
+             patch("prot.memory.settings") as mock_settings:
+            mock_settings.memory_extraction_model = "test-model"
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            extractor._known_entities = {"Alice"}
+            messages = [{"role": "user", "content": "hello"}]
+            await extractor.extract_incremental(messages)
+
+            call_args = mock_anthropic.messages.create.call_args
+            system_blocks = call_args.kwargs["system"]
+            assert isinstance(system_blocks, list)
+            # First block: base prompt with cache_control
+            assert system_blocks[0]["cache_control"] == {"type": "ephemeral"}
+            # Second block: known entities (no cache — dynamic)
+            assert "cache_control" not in system_blocks[1]
+
+    async def test_extract_without_known_entities_single_block(self):
+        """Verify only base block is sent when no known entities."""
+        mock_anthropic = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text='{"entities": [], "relationships": []}')]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.memory.AsyncAnthropic", return_value=mock_anthropic), \
+             patch("prot.memory.settings") as mock_settings:
+            mock_settings.memory_extraction_model = "test-model"
+            extractor = MemoryExtractor(
+                anthropic_key="test", store=AsyncMock(), embedder=AsyncMock()
+            )
+            messages = [{"role": "user", "content": "hello"}]
+            await extractor.extract_incremental(messages)
+
+            call_args = mock_anthropic.messages.create.call_args
+            system_blocks = call_args.kwargs["system"]
+            assert len(system_blocks) == 1
+            assert "cache_control" in system_blocks[0]

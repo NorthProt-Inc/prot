@@ -151,11 +151,13 @@ class TestRebuild:
             ],
         )
         mock_embedder = AsyncMock()
-        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024]
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024, [0.2] * 1024]
 
         mock_anthropic = AsyncMock()
+        # Batch summarization returns JSON
+        batch_json = '{"1": "Group of people A B C", "2": "Group of places D E F"}'
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="A summary")]
+        mock_response.content = [MagicMock(text=batch_json)]
         mock_anthropic.messages.create.return_value = mock_response
 
         with patch("prot.community.AsyncAnthropic", return_value=mock_anthropic):
@@ -168,6 +170,8 @@ class TestRebuild:
         mock_store.rebuild_communities.assert_called_once()
         communities = mock_store.rebuild_communities.call_args[0][0]
         assert len(communities) == 2
+        # Single batch LLM call instead of N individual calls
+        assert mock_anthropic.messages.create.call_count == 1
 
     async def test_rebuild_skips_when_too_few_entities(self):
         mock_store = AsyncMock()
@@ -199,3 +203,81 @@ class TestRebuild:
 
         assert count == 0
         mock_store.rebuild_communities.assert_called_once_with([])
+
+
+class TestBatchSummarization:
+    """_summarize_communities_batch — batch LLM summarization."""
+
+    async def test_batch_summarizes_multiple_communities(self):
+        """Single LLM call summarizes all communities, returns parsed summaries."""
+        mock_anthropic = AsyncMock()
+        batch_json = '{"1": "People group summary", "2": "Places group summary"}'
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text=batch_json)]
+        mock_anthropic.messages.create.return_value = mock_response
+
+        with patch("prot.community.AsyncAnthropic", return_value=mock_anthropic):
+            detector = CommunityDetector(
+                store=AsyncMock(), embedder=AsyncMock(), anthropic_key="test"
+            )
+            groups = [
+                [{"name": "A", "entity_type": "person", "description": "desc A"},
+                 {"name": "B", "entity_type": "person", "description": "desc B"}],
+                [{"name": "C", "entity_type": "place", "description": "desc C"},
+                 {"name": "D", "entity_type": "place", "description": "desc D"}],
+            ]
+            result = await detector._summarize_communities_batch(groups)
+
+        assert result == ["People group summary", "Places group summary"]
+        mock_anthropic.messages.create.assert_called_once()
+
+    async def test_batch_falls_back_on_parse_failure(self):
+        """Malformed JSON falls back to individual summarization."""
+        mock_anthropic = AsyncMock()
+        # First call: batch (returns bad JSON)
+        # Subsequent calls: individual fallback
+        responses = [
+            MagicMock(content=[MagicMock(text="not valid json")]),
+            MagicMock(content=[MagicMock(text="Summary A")]),
+            MagicMock(content=[MagicMock(text="Summary B")]),
+        ]
+        mock_anthropic.messages.create.side_effect = responses
+
+        with patch("prot.community.AsyncAnthropic", return_value=mock_anthropic):
+            detector = CommunityDetector(
+                store=AsyncMock(), embedder=AsyncMock(), anthropic_key="test"
+            )
+            groups = [
+                [{"name": "A", "entity_type": "person", "description": "desc A"},
+                 {"name": "B", "entity_type": "person", "description": "desc B"}],
+                [{"name": "C", "entity_type": "place", "description": "desc C"},
+                 {"name": "D", "entity_type": "place", "description": "desc D"}],
+            ]
+            result = await detector._summarize_communities_batch(groups)
+
+        assert result == ["Summary A", "Summary B"]
+        # 1 batch attempt + 2 individual fallbacks
+        assert mock_anthropic.messages.create.call_count == 3
+
+    def test_parse_batch_summaries_valid(self):
+        """Valid JSON parses correctly."""
+        raw = '{"1": "Summary one", "2": "Summary two"}'
+        result = CommunityDetector._parse_batch_summaries(raw, 2)
+        assert result == ["Summary one", "Summary two"]
+
+    def test_parse_batch_summaries_incomplete(self):
+        """Incomplete JSON (missing keys) returns None."""
+        raw = '{"1": "Summary one"}'
+        result = CommunityDetector._parse_batch_summaries(raw, 2)
+        assert result is None
+
+    def test_parse_batch_summaries_invalid_json(self):
+        """Non-JSON returns None."""
+        result = CommunityDetector._parse_batch_summaries("not json", 2)
+        assert result is None
+
+    def test_parse_batch_summaries_strips_markdown_fencing(self):
+        """Markdown code fencing is stripped before parsing."""
+        raw = '```json\n{"1": "A", "2": "B"}\n```'
+        result = CommunityDetector._parse_batch_summaries(raw, 2)
+        assert result == ["A", "B"]

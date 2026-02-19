@@ -55,7 +55,8 @@ class Settings(BaseSettings):
 
     # Memory
     memory_extraction_model: str = "claude-sonnet-4-6"
-    memory_extraction_window_turns: int = 3
+    memory_extraction_interval: int = 3  # extract every Nth exchange
+    memory_extraction_window_turns: int = 3  # deprecated: kept for config compat
     rag_context_target_tokens: int = 4096
     rag_top_k: int = 10
 

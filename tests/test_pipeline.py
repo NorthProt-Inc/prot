@@ -84,6 +84,7 @@ def _make_pipeline():
     p._barge_in_grace = 1.5
     p._background_tasks = set()
     p._session_msg_offset = 0
+    p._exchange_count = 0
 
     return p
 
@@ -543,7 +544,10 @@ class TestExtractMemoriesBg:
         mock_memory.save_extraction = AsyncMock()
         p._memory = mock_memory
 
-        p._extract_memories_bg()
+        # Extraction fires on interval (default 3) — call enough times
+        with patch("prot.pipeline.settings") as ms:
+            ms.memory_extraction_interval = 1  # fire every time for this test
+            p._extract_memories_bg()
         assert len(p._background_tasks) == 1
         await asyncio.sleep(0.05)
         assert len(p._background_tasks) == 0
@@ -558,9 +562,13 @@ class TestExtractMemoriesBg:
 
         mock_memory = AsyncMock()
         mock_memory.extract_from_conversation = slow_extract
+        mock_memory.extract_incremental = slow_extract
+        mock_memory.save_extraction = AsyncMock()
         p._memory = mock_memory
 
-        p._extract_memories_bg()
+        with patch("prot.pipeline.settings") as ms:
+            ms.memory_extraction_interval = 1
+            p._extract_memories_bg()
         assert len(p._background_tasks) == 1
 
         await p.shutdown()
@@ -1119,3 +1127,76 @@ class TestPipelineHassRouting:
             await p._process_response()
 
         p._ctx.build_tools.assert_called_with(hass_registry=mock_registry)
+
+
+class TestExtractionInterval:
+    """_extract_memories_bg() — extraction interval gating."""
+
+    async def test_extraction_skipped_when_interval_not_met(self):
+        """Extraction should not fire until the interval is met."""
+        p = _make_pipeline()
+        mock_memory = AsyncMock()
+        mock_memory.extract_incremental = AsyncMock(
+            return_value={"entities": [], "relationships": []}
+        )
+        mock_memory.save_extraction = AsyncMock()
+        p._memory = mock_memory
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.memory_extraction_interval = 3
+            # Call 1 and 2: should not fire
+            p._extract_memories_bg()
+            p._extract_memories_bg()
+        assert len(p._background_tasks) == 0
+
+    async def test_extraction_fires_on_interval(self):
+        """Extraction should fire on every Nth call."""
+        p = _make_pipeline()
+        mock_memory = AsyncMock()
+        mock_memory.extract_incremental = AsyncMock(
+            return_value={"entities": [], "relationships": []}
+        )
+        mock_memory.save_extraction = AsyncMock()
+        p._memory = mock_memory
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.memory_extraction_interval = 3
+            # Calls 1, 2: skip; Call 3: fire
+            p._extract_memories_bg()
+            p._extract_memories_bg()
+            p._extract_memories_bg()
+        assert len(p._background_tasks) == 1
+        await asyncio.sleep(0.05)
+        assert len(p._background_tasks) == 0
+
+
+class TestShutdownFinalExtraction:
+    """shutdown() — best-effort final extraction after bg task cancellation."""
+
+    async def test_shutdown_runs_final_extraction(self):
+        """shutdown() should attempt extraction after cancelling bg tasks."""
+        p = _make_pipeline()
+        mock_memory = AsyncMock()
+        mock_memory.extract_incremental = AsyncMock(
+            return_value={"entities": [{"name": "X", "type": "person", "description": "test"}], "relationships": []}
+        )
+        mock_memory.save_extraction = AsyncMock()
+        mock_memory.close = AsyncMock()
+        p._memory = mock_memory
+        p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
+
+        await p.shutdown()
+
+        mock_memory.extract_incremental.assert_awaited_once()
+        mock_memory.save_extraction.assert_awaited_once()
+
+    async def test_shutdown_final_extraction_failure_does_not_block(self):
+        """Final extraction failure should not prevent shutdown."""
+        p = _make_pipeline()
+        mock_memory = AsyncMock()
+        mock_memory.extract_incremental = AsyncMock(side_effect=Exception("boom"))
+        mock_memory.close = AsyncMock()
+        p._memory = mock_memory
+        p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
+
+        await p.shutdown()  # should not raise
