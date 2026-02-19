@@ -434,6 +434,13 @@ class Pipeline:
 
         self._active_timeout_task = asyncio.create_task(_timeout())
 
+    def _bg(self, coro) -> asyncio.Task:
+        """Fire-and-forget a coroutine as a tracked background task."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     def _extract_memories_bg(self) -> None:
         """Background task to extract and save memories — tracked for shutdown cleanup."""
         if not self._memory:
@@ -453,9 +460,7 @@ class Pipeline:
             except Exception:
                 logger.warning("Memory extraction failed", exc_info=True)
 
-        task = asyncio.create_task(_extract())
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        self._bg(_extract())
 
     def _save_message_bg(self, role: str, content: str) -> None:
         """Persist a conversation message to DB in the background."""
@@ -470,9 +475,7 @@ class Pipeline:
             except Exception:
                 logger.debug("Message save failed", exc_info=True)
 
-        task = asyncio.create_task(_save())
-        self._background_tasks.add(task)
-        task.add_done_callback(self._background_tasks.discard)
+        self._bg(_save())
 
     def _save_session_log(self) -> None:
         """Save new conversation messages as JSONL and reset session."""

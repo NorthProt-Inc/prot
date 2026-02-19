@@ -151,6 +151,17 @@ class MemoryExtractor:
         ):
             await self._maybe_rebuild_communities()
 
+    async def _rerank_if_available(
+        self, query: str, items: list[dict], text_key: str,
+    ) -> list[dict]:
+        """Rerank items using the reranker if available, otherwise return as-is."""
+        if self._reranker and len(items) > 1:
+            return await self._reranker.rerank(
+                query=query, items=items, text_key=text_key,
+                top_k=settings.rerank_top_k,
+            )
+        return items
+
     async def _maybe_rebuild_communities(self) -> None:
         """Trigger community detection rebuild."""
         try:
@@ -198,12 +209,7 @@ class MemoryExtractor:
             query_embedding=query_embedding, top_k=settings.rag_top_k,
         )
 
-        # Rerank entities if reranker available
-        if self._reranker and len(entities) > 1:
-            entities = await self._reranker.rerank(
-                query=query, items=entities, text_key="description",
-                top_k=settings.rerank_top_k,
-            )
+        entities = await self._rerank_if_available(query, entities, "description")
 
         neighbor_lists = await asyncio.gather(*(
             self._store.get_entity_neighbors(entity["id"])
@@ -226,12 +232,7 @@ class MemoryExtractor:
             top_k=settings.rag_top_k,
         )
 
-        # Rerank communities if reranker available
-        if self._reranker and len(communities) > 1:
-            communities = await self._reranker.rerank(
-                query=query, items=communities, text_key="summary",
-                top_k=settings.rerank_top_k,
-            )
+        communities = await self._rerank_if_available(query, communities, "summary")
 
         for community in communities:
             if not _add(community["summary"]):

@@ -25,16 +25,19 @@ class AudioPlayer:
         self._format = format
         self._process: asyncio.subprocess.Process | None = None
 
+    async def _kill_process(self) -> None:
+        """Terminate the current subprocess if running."""
+        try:
+            if self._process and self._process.returncode is None:
+                self._process.kill()
+                await self._process.wait()
+        except ProcessLookupError:
+            pass
+        self._process = None
+
     async def start(self) -> None:
         """Start paplay subprocess, killing any previous one first."""
-        if self._process is not None:
-            try:
-                if self._process.returncode is None:
-                    self._process.kill()
-                    await self._process.wait()
-            except ProcessLookupError:
-                pass
-            self._process = None
+        await self._kill_process()
         logger.debug("Player started", rate=self._rate)
         self._process = await asyncio.create_subprocess_exec(
             "paplay",
@@ -53,13 +56,7 @@ class AudioPlayer:
                 await self._process.stdin.drain()
             except (BrokenPipeError, ConnectionResetError):
                 logger.warning("paplay died")
-                try:
-                    if self._process.returncode is None:
-                        self._process.kill()
-                        await self._process.wait()
-                except ProcessLookupError:
-                    pass
-                self._process = None
+                await self._kill_process()
 
     async def finish(self) -> None:
         """Close stdin and wait for paplay to finish."""
@@ -70,9 +67,4 @@ class AudioPlayer:
 
     async def kill(self) -> None:
         """Immediately kill paplay (for barge-in)."""
-        try:
-            if self._process and self._process.returncode is None:
-                self._process.kill()
-                await self._process.wait()
-        finally:
-            self._process = None
+        await self._kill_process()

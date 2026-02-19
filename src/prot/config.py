@@ -1,4 +1,8 @@
+from zoneinfo import ZoneInfo
+
 from pydantic_settings import BaseSettings
+
+LOCAL_TZ = ZoneInfo("America/Vancouver")
 
 
 class Settings(BaseSettings):
