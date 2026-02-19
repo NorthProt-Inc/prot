@@ -171,6 +171,29 @@ class Pipeline:
         except Exception:
             logger.exception("Error in audio chunk processing")
 
+
+    async def _reconnect_stt(self) -> bool:
+        """Drain prebuffer, reset VAD, connect STT, and flush pending audio.
+
+        Returns True on success, False if STT connection failed.
+        On failure the caller is responsible for state transitions;
+        this helper only cleans up pending audio and resets the turn.
+        """
+        self._pending_audio = self._vad.drain_prebuffer()
+        self._vad.reset()
+
+        await self._stt.connect()
+        if not self._stt.is_connected:
+            self._pending_audio.clear()
+            reset_turn()
+            return False
+
+        for chunk in self._pending_audio:
+            await self._stt.send_audio(chunk)
+        self._pending_audio.clear()
+        self._stt_connected = True
+        return True
+
     async def _handle_vad_speech(self) -> None:
         """VAD detected speech in IDLE/ACTIVE — transition and connect STT."""
         start_turn()
@@ -179,23 +202,10 @@ class Pipeline:
         self._current_transcript = ""
         self._stt_connected = False
 
-        # Drain ring buffer BEFORE reset (pre-trigger audio)
-        self._pending_audio = self._vad.drain_prebuffer()
-        self._vad.reset()
-
-        await self._stt.connect()
-        if not self._stt.is_connected:
+        if not await self._reconnect_stt():
             logger.warning("STT connect failed, falling back to IDLE")
             self._sm.force_recovery(State.IDLE)
-            self._pending_audio.clear()
-            reset_turn()
             return
-
-        # Flush prebuffer + audio that arrived during connect
-        for chunk in self._pending_audio:
-            await self._stt.send_audio(chunk)
-        self._pending_audio.clear()
-        self._stt_connected = True
 
     async def _on_transcript(self, text: str, is_final: bool) -> None:
         """STT callback — store final transcript only."""
@@ -404,21 +414,10 @@ class Pipeline:
         start_turn()
         self._current_transcript = ""
 
-        self._pending_audio = self._vad.drain_prebuffer()
-        self._vad.reset()
-
-        await self._stt.connect()
-        if not self._stt.is_connected:
+        if not await self._reconnect_stt():
             logger.warning("STT reconnect failed after barge-in, falling back to IDLE")
             self._sm.force_recovery(State.IDLE)
-            self._pending_audio.clear()
-            reset_turn()
             return
-
-        for chunk in self._pending_audio:
-            await self._stt.send_audio(chunk)
-        self._pending_audio.clear()
-        self._stt_connected = True
 
     def _start_active_timeout(self) -> None:
         """Start timer to return to IDLE after active_timeout seconds."""
