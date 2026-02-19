@@ -93,7 +93,7 @@ class MemoryExtractor:
             return
 
         descriptions = [e["description"] for e in entities]
-        embeddings = await self._embedder.embed_texts(descriptions)
+        embeddings = await self._embedder.embed_chunks_contextual(descriptions)
 
         async with self._store.acquire() as conn:
             async with conn.transaction():

@@ -43,7 +43,7 @@ class TestMemoryExtractor:
         mock_store, mock_conn = _make_store_with_conn()
         mock_store.upsert_entity.return_value = "fake-uuid"
         mock_embedder = AsyncMock()
-        mock_embedder.embed_texts.return_value = [[0.1] * 1024]
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024]
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -53,10 +53,27 @@ class TestMemoryExtractor:
             "relationships": [],
         })
         mock_store.upsert_entity.assert_called_once()
-        mock_embedder.embed_texts.assert_called_once()
+        mock_embedder.embed_chunks_contextual.assert_called_once()
         # Verify conn was passed through
         call_kwargs = mock_store.upsert_entity.call_args.kwargs
         assert call_kwargs["conn"] is mock_conn
+
+    async def test_save_extraction_uses_contextual_embeddings(self):
+        """Verify save_extraction uses embed_chunks_contextual, not embed_texts."""
+        mock_store, mock_conn = _make_store_with_conn()
+        mock_store.upsert_entity.return_value = "fake-uuid"
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024]
+
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=mock_store, embedder=mock_embedder
+        )
+        await extractor.save_extraction({
+            "entities": [{"name": "Bob", "type": "person", "description": "A friend"}],
+            "relationships": [],
+        })
+        mock_embedder.embed_chunks_contextual.assert_called_once_with(["A friend"])
+        mock_embedder.embed_texts.assert_not_called()
 
     async def test_pre_load_context_returns_text(self):
         mock_store = AsyncMock()
@@ -86,7 +103,7 @@ class TestMemoryExtractor:
         mock_store, mock_conn = _make_store_with_conn()
         mock_store.upsert_entity.side_effect = ["uuid-bob", "uuid-alice"]
         mock_embedder = AsyncMock()
-        mock_embedder.embed_texts.return_value = [[0.1] * 1024, [0.2] * 1024]
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024, [0.2] * 1024]
 
         extractor = MemoryExtractor(
             anthropic_key="test", store=mock_store, embedder=mock_embedder
@@ -126,7 +143,7 @@ class TestMemoryExtractor:
             "relationships": [],
         })
         mock_store.upsert_entity.assert_not_called()
-        mock_embedder.embed_texts.assert_not_called()
+        mock_embedder.embed_chunks_contextual.assert_not_called()
 
     async def test_extract_from_conversation_handles_malformed_json(self):
         """Verify graceful fallback when LLM returns non-JSON."""
@@ -334,7 +351,7 @@ class TestCommunityRebuildTrigger:
         mock_store, mock_conn = _make_store_with_conn()
         mock_store.upsert_entity.return_value = "fake-uuid"
         mock_embedder = AsyncMock()
-        mock_embedder.embed_texts.return_value = [[0.1] * 1024]
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024]
         mock_detector = AsyncMock()
         mock_detector.rebuild.return_value = 2
 
@@ -362,7 +379,7 @@ class TestCommunityRebuildTrigger:
         mock_store, mock_conn = _make_store_with_conn()
         mock_store.upsert_entity.return_value = "fake-uuid"
         mock_embedder = AsyncMock()
-        mock_embedder.embed_texts.return_value = [[0.1] * 1024]
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024]
 
         extractor = MemoryExtractor(
             anthropic_key="test",
@@ -382,7 +399,7 @@ class TestCommunityRebuildTrigger:
         mock_store, mock_conn = _make_store_with_conn()
         mock_store.upsert_entity.return_value = "fake-uuid"
         mock_embedder = AsyncMock()
-        mock_embedder.embed_texts.return_value = [[0.1] * 1024]
+        mock_embedder.embed_chunks_contextual.return_value = [[0.1] * 1024]
         mock_detector = AsyncMock()
         mock_detector.rebuild.side_effect = Exception("boom")
 
