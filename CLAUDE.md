@@ -32,7 +32,8 @@ src/prot/
   tts.py           # ElevenLabs TTS streaming
   playback.py      # paplay (PulseAudio) audio output with producer-consumer queue
   processing.py    # Orchestrates LLM→TTS→playback per utterance
-  context.py       # 3-block system prompt builder + sliding window context (last N turns)
+  context.py       # 3-block system prompt builder + conversation data container
+  trimmer.py       # Token-budget context trimmer (count_tokens API + heuristic fallback)
   persona.py       # Axel persona definition (loaded from data/axel.json)
   memory.py        # Background memory extraction + RAG context retrieval
   graphrag.py      # pgvector-backed entity/relationship/community storage
@@ -61,9 +62,10 @@ src/prot/
 - **Tool loop**: LLM supports up to 3 tool-use rounds per response (Home Assistant, web search).
 - **Prompt caching**: System prompt uses 3-block layout optimized for Anthropic cache hits.
   Block order matters — persona (static) → RAG context (semi-static) → dynamic.
-- **Sliding window**: `get_recent_messages(max_turns)` returns last N turns for LLM calls.
-  Full history preserved via `get_messages()` for session logging and memory extraction.
-  Window boundary skips orphaned tool_result messages to maintain valid conversation flow.
+- **Token-budget context**: `TokenBudgetTrimmer` trims messages to fit within `context_token_budget` tokens.
+  First call uses `count_tokens()` API; tool-loop iterations reuse `usage.input_tokens` from prior response.
+  Long `tool_result` blocks are truncated to `context_tool_result_max_chars`. ContextManager stays a pure data
+  container — trimming happens in pipeline via the trimmer.
 - **Memory extraction**: Runs in background after each exchange. Uses configurable model (default Sonnet 4.6) for entity/relationship extraction.
   Contextual embeddings (voyage-context-3) for document-aware entity storage. Reranker (rerank-2.5) refines RAG results.
   Community detection triggers every 5 extractions via CommunityDetector (Louvain clustering).

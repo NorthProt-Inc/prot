@@ -83,14 +83,13 @@ class ContextManager:
         """Return a copy of the conversation history."""
         return list(self._messages)
 
-    def get_recent_messages(self, max_turns: int = 10) -> list[dict]:
-        """Return recent conversation history (sliding window).
+    def get_recent_messages(self) -> list[dict]:
+        """Return conversation history with orphan boundary correction.
 
-        Keeps the last max_turns * 2 messages, ensuring the window
-        starts at a real user message (not an orphaned tool_result).
+        Ensures the window starts at a real user message
+        (not an orphaned tool_result or assistant message).
         """
-        max_messages = max_turns * 2
-        messages = self._messages[-max_messages:]
+        messages = list(self._messages)
         while messages and (
             messages[0]["role"] != "user"
             or is_tool_result_message(messages[0])

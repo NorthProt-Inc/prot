@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from prot.config import settings
 from prot.context import ContextManager
+from prot.trimmer import TokenBudgetTrimmer
 from prot.conversation_log import ConversationLogger
 from prot.llm import LLMClient
 from prot.persona import load_persona
@@ -242,10 +243,17 @@ class Pipeline:
         """
         system_blocks = self._ctx.build_system_blocks()
         tools = self._ctx.build_tools(hass_registry=self._hass_registry)
+        trimmer = TokenBudgetTrimmer(
+            llm=self._llm,
+            system=system_blocks,
+            tools=tools,
+            budget=settings.context_token_budget,
+        )
 
         try:
             for iteration in range(self._MAX_TOOL_ITERATIONS):
-                messages = self._ctx.get_recent_messages(settings.context_max_turns)
+                messages = self._ctx.get_recent_messages()
+                messages = await trimmer.fit(messages)
 
                 _response_parts: list[str] = []
                 buffer = ""
@@ -383,6 +391,7 @@ class Pipeline:
                         })
 
                 self._ctx.add_message("user", tool_results)
+                trimmer.update_overhead(self._llm.last_usage)
 
                 # [FIX 4] Guard: bail if barge-in happened during tool execution
                 if self._sm.state != State.SPEAKING:

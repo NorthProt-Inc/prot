@@ -173,6 +173,96 @@ class TestLLMClient:
             assert call_kwargs["tools"] is None
 
 
+class TestLastUsage:
+    async def test_last_usage_captured(self):
+        mock_usage = MagicMock(input_tokens=150, output_tokens=50)
+        mock_stream = AsyncMock()
+        mock_stream.__aenter__ = AsyncMock(return_value=mock_stream)
+        mock_stream.__aexit__ = AsyncMock(return_value=False)
+        mock_stream.__aiter__ = lambda self: self
+        mock_stream.__anext__ = AsyncMock(side_effect=StopAsyncIteration)
+        mock_stream.get_final_message = AsyncMock(
+            return_value=MagicMock(content=[], usage=mock_usage)
+        )
+
+        with patch("prot.llm.AsyncAnthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.stream.return_value = mock_stream
+
+            client = LLMClient(api_key="test")
+            assert client.last_usage is None
+            async for _ in client.stream_response(
+                system_blocks=[], tools=[], messages=[],
+            ):
+                pass
+
+            assert client.last_usage is mock_usage
+            assert client.last_usage.input_tokens == 150
+
+    async def test_last_usage_none_on_error(self):
+        mock_stream = AsyncMock()
+        mock_stream.__aenter__ = AsyncMock(return_value=mock_stream)
+        mock_stream.__aexit__ = AsyncMock(return_value=False)
+        mock_stream.__aiter__ = lambda self: self
+        mock_stream.__anext__ = AsyncMock(side_effect=StopAsyncIteration)
+        mock_stream.get_final_message = AsyncMock(side_effect=RuntimeError("fail"))
+
+        with patch("prot.llm.AsyncAnthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.stream.return_value = mock_stream
+
+            client = LLMClient(api_key="test")
+            async for _ in client.stream_response(
+                system_blocks=[], tools=[], messages=[],
+            ):
+                pass
+
+            assert client.last_usage is None
+
+
+class TestCountTokens:
+    async def test_count_tokens_returns_input_tokens(self):
+        with patch("prot.llm.AsyncAnthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.count_tokens = AsyncMock(
+                return_value=MagicMock(input_tokens=42)
+            )
+
+            client = LLMClient(api_key="test")
+            result = await client.count_tokens(
+                system=[{"type": "text", "text": "test"}],
+                tools=[],
+                messages=[{"role": "user", "content": "hi"}],
+            )
+
+            assert result == 42
+            call_kwargs = mock_client.messages.count_tokens.call_args.kwargs
+            assert call_kwargs["thinking"] == {"type": "adaptive"}
+
+    async def test_count_tokens_passes_system_and_tools(self):
+        with patch("prot.llm.AsyncAnthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.count_tokens = AsyncMock(
+                return_value=MagicMock(input_tokens=100)
+            )
+
+            client = LLMClient(api_key="test")
+            system = [{"type": "text", "text": "persona"}]
+            tools = [{"name": "web_search", "type": "web_search_20250305"}]
+            messages = [{"role": "user", "content": "hello"}]
+
+            await client.count_tokens(system=system, tools=tools, messages=messages)
+
+            call_kwargs = mock_client.messages.count_tokens.call_args.kwargs
+            assert call_kwargs["system"] == system
+            assert call_kwargs["tools"] == tools
+            assert call_kwargs["messages"] == messages
+
+
 class TestToolDetection:
     def test_get_tool_use_blocks_extracts_tools(self):
         client = LLMClient.__new__(LLMClient)

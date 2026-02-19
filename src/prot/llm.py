@@ -11,6 +11,7 @@ class LLMClient:
         self._client = AsyncAnthropic(api_key=api_key or settings.anthropic_api_key)
         self._cancelled = False
         self._last_response_content = None
+        self._last_usage = None
 
     @logged(slow_ms=2000, log_args=True)
     async def stream_response(
@@ -51,8 +52,15 @@ class LLMClient:
         try:
             final = await stream.get_final_message()
             self._last_response_content = final.content
+            self._last_usage = final.usage
         except Exception:
             self._last_response_content = None
+            self._last_usage = None
+
+    @property
+    def last_usage(self):
+        """Token usage from the last streamed response."""
+        return self._last_usage
 
     @property
     def last_response_content(self):
@@ -64,6 +72,22 @@ class LLMClient:
         if not self._last_response_content:
             return []
         return [b for b in self._last_response_content if getattr(b, "type", None) == "tool_use"]
+
+    async def count_tokens(
+        self,
+        system: list[dict],
+        tools: list[dict] | None,
+        messages: list[dict],
+    ) -> int:
+        """Count input tokens for a message set using Anthropic API."""
+        result = await self._client.messages.count_tokens(
+            model=settings.claude_model,
+            system=system,
+            tools=tools or [],
+            messages=messages,
+            thinking={"type": "adaptive"},
+        )
+        return result.input_tokens
 
     def cancel(self) -> None:
         """Cancel the active stream."""
