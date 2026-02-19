@@ -1,4 +1,4 @@
-"""Memory extraction and pre-loading using Haiku 4.5 and GraphRAG."""
+"""Memory extraction and pre-loading via GraphRAG."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ class MemoryExtractor:
             return
 
         descriptions = [e["description"] for e in entities]
-        embeddings = await self._embedder.embed_chunks_contextual(descriptions)
+        embeddings = await self._embedder.embed_texts_contextual(descriptions)
 
         async with self._store.acquire() as conn:
             async with conn.transaction():
@@ -126,6 +126,14 @@ class MemoryExtractor:
                 for rel in relationships:
                     src_id = entity_ids.get(rel["source"])
                     tgt_id = entity_ids.get(rel["target"])
+                    if not src_id:
+                        src_id = await self._store.get_entity_id_by_name(
+                            rel["source"], conn=conn,
+                        )
+                    if not tgt_id:
+                        tgt_id = await self._store.get_entity_id_by_name(
+                            rel["target"], conn=conn,
+                        )
                     if src_id and tgt_id:
                         await self._store.upsert_relationship(
                             source_id=src_id,
@@ -206,7 +214,9 @@ class MemoryExtractor:
             if not _add(line):
                 break
             for n in neighbors[:3]:
-                nline = f"  > {n['name']}: {n['description']}"
+                rel = f" ({n['relation_type']})" if n.get("relation_type") else ""
+                desc = n.get("rel_description") or n["description"]
+                nline = f"  > {n['name']}{rel}: {desc}"
                 if not _add(nline):
                     break
 
@@ -215,6 +225,14 @@ class MemoryExtractor:
             query_embedding=query_embedding,
             top_k=settings.rag_top_k,
         )
+
+        # Rerank communities if reranker available
+        if self._reranker and len(communities) > 1:
+            communities = await self._reranker.rerank(
+                query=query, items=communities, text_key="summary",
+                top_k=settings.rerank_top_k,
+            )
+
         for community in communities:
             if not _add(community["summary"]):
                 break

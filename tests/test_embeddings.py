@@ -107,6 +107,33 @@ class TestAsyncVoyageEmbedder:
                 input_type="query",
             )
 
+    async def test_embed_texts_contextual_wraps_each_independently(self):
+        """Each text = its own document: inputs=[[t1], [t2], [t3]]."""
+        mock_client = AsyncMock()
+        mock_r0 = MagicMock(); mock_r0.embeddings = [[0.1] * 1024]
+        mock_r1 = MagicMock(); mock_r1.embeddings = [[0.2] * 1024]
+        mock_r2 = MagicMock(); mock_r2.embeddings = [[0.3] * 1024]
+        mock_result = MagicMock(); mock_result.results = [mock_r0, mock_r1, mock_r2]
+        mock_client.contextualized_embed.return_value = mock_result
+
+        with patch("prot.embeddings.voyageai.AsyncClient", return_value=mock_client):
+            embedder = AsyncVoyageEmbedder(api_key="test")
+            vectors = await embedder.embed_texts_contextual(["desc A", "desc B", "desc C"])
+            assert len(vectors) == 3
+            assert vectors[1] == [0.2] * 1024
+            mock_client.contextualized_embed.assert_called_once_with(
+                inputs=[["desc A"], ["desc B"], ["desc C"]],
+                model="voyage-context-3",
+                input_type="document",
+            )
+
+    async def test_close_without_close_method(self):
+        """close() handles missing close() gracefully."""
+        mock_client = MagicMock(spec=[])  # no close attr
+        with patch("prot.embeddings.voyageai.AsyncClient", return_value=mock_client):
+            embedder = AsyncVoyageEmbedder(api_key="test")
+            await embedder.close()  # should not raise
+
     async def test_semaphore_limits_concurrency(self):
         embedder = AsyncVoyageEmbedder.__new__(AsyncVoyageEmbedder)
         embedder._max_concurrent = 5

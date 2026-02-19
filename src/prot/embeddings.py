@@ -25,7 +25,10 @@ class AsyncVoyageEmbedder:
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
-        await self._client.close()
+        if hasattr(self._client, "close"):
+            await self._client.close()
+        elif hasattr(self._client, "aclose"):
+            await self._client.aclose()
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple texts (input_type='document'). Auto-batches over MAX_BATCH."""
@@ -70,3 +73,13 @@ class AsyncVoyageEmbedder:
                 input_type="document",
             )
         return result.results[0].embeddings
+
+    async def embed_texts_contextual(self, texts: list[str]) -> list[list[float]]:
+        """Embed independent texts using voyage-context-3. Each text is its own document."""
+        async with self._semaphore:
+            result = await self._client.contextualized_embed(
+                inputs=[[text] for text in texts],
+                model=settings.voyage_context_model,
+                input_type="document",
+            )
+        return [r.embeddings[0] for r in result.results]

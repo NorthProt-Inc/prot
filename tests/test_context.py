@@ -170,6 +170,16 @@ class TestGetRecentMessages:
             cm.add_message("user", f"msg-{i}")
         assert len(cm.get_messages()) == 50
 
+    def test_preserves_user_message_with_non_tool_result_list(self):
+        """User messages with non-tool_result list content should NOT be skipped."""
+        cm = ContextManager(persona_text="test", rag_context="")
+        cm.add_message("user", [{"type": "text", "text": "hello with blocks"}])
+        cm.add_message("assistant", "response")
+        result = cm.get_recent_messages(max_turns=1)
+        assert len(result) == 2
+        assert result[0]["role"] == "user"
+        assert isinstance(result[0]["content"], list)
+
     def test_empty_history(self):
         cm = ContextManager(persona_text="test", rag_context="")
         assert cm.get_recent_messages(max_turns=10) == []
