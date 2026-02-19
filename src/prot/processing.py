@@ -7,6 +7,23 @@ _RE_SENTENCE_END = re.compile(r'[.!?~]$')
 
 MAX_BUFFER_CHARS = 2000
 
+_RE_SPACE_BEFORE_BRACKET = re.compile(r'(\w)\[')
+_RE_SPACE_AFTER_BRACKET = re.compile(r'\](\w)')
+
+
+def sanitize_for_tts(text: str) -> str:
+    """Ensure spacing around audio tag brackets for ElevenLabs v3.
+
+    Injects space before [ when preceded by a word char,
+    and after ] when followed by a word char.
+    Preserves ]., ]!, ]? (no space before punctuation).
+    """
+    if not text:
+        return text
+    text = _RE_SPACE_BEFORE_BRACKET.sub(r'\1 [', text)
+    text = _RE_SPACE_AFTER_BRACKET.sub(r'] \1', text)
+    return text
+
 
 def is_tool_result_message(msg: dict) -> bool:
     """Check if a message contains only tool_result blocks."""

@@ -12,7 +12,7 @@ from prot.conversation_log import ConversationLogger
 from prot.llm import LLMClient
 from prot.persona import load_persona
 from prot.playback import AudioPlayer
-from prot.processing import chunk_sentences
+from prot.processing import chunk_sentences, sanitize_for_tts
 from prot.state import State, StateMachine
 from prot.stt import STTClient
 from prot.tts import TTSClient
@@ -271,9 +271,10 @@ class Pipeline:
                             buffer += chunk
                             sentences, buffer = chunk_sentences(buffer)
                             for sentence in sentences:
-                                if not sentence.strip():
+                                clean = sanitize_for_tts(sentence)
+                                if not clean:
                                     continue
-                                async for audio in self._tts.stream_audio(sentence):
+                                async for audio in self._tts.stream_audio(clean):
                                     if self._sm.state == State.INTERRUPTED:
                                         return
                                     await audio_q.put(audio)
@@ -286,10 +287,12 @@ class Pipeline:
                                     await audio_q.put(_silence)
                         # Flush remaining
                         if buffer.strip() and self._sm.state != State.INTERRUPTED:
-                            async for audio in self._tts.stream_audio(buffer):
-                                if self._sm.state == State.INTERRUPTED:
-                                    return
-                                await audio_q.put(audio)
+                            clean = sanitize_for_tts(buffer)
+                            if clean:
+                                async for audio in self._tts.stream_audio(clean):
+                                    if self._sm.state == State.INTERRUPTED:
+                                        return
+                                    await audio_q.put(audio)
                     finally:
                         await audio_q.put(None)  # sentinel
 

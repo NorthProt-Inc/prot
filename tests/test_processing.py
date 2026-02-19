@@ -1,5 +1,34 @@
 import pytest
-from prot.processing import chunk_sentences, is_tool_result_message, MAX_BUFFER_CHARS
+from prot.processing import chunk_sentences, is_tool_result_message, sanitize_for_tts, MAX_BUFFER_CHARS
+
+
+class TestSanitizeForTts:
+    def test_injects_space_before_bracket(self):
+        assert sanitize_for_tts("비효율이지[sarcastic].") == "비효율이지 [sarcastic]."
+
+    def test_injects_space_after_bracket(self):
+        assert sanitize_for_tts("[sarcastic]다음") == "[sarcastic] 다음"
+
+    def test_no_space_between_bracket_and_punctuation(self):
+        assert sanitize_for_tts("[sarcastic].") == "[sarcastic]."
+
+    def test_already_spaced(self):
+        assert sanitize_for_tts("비효율이지 [sarcastic].") == "비효율이지 [sarcastic]."
+
+    def test_multiple_tags(self):
+        assert sanitize_for_tts("하나[sighs]. 둘[laughs]!") == "하나 [sighs]. 둘 [laughs]!"
+
+    def test_plain_text_unchanged(self):
+        assert sanitize_for_tts("일반 한국어 텍스트.") == "일반 한국어 텍스트."
+
+    def test_empty_string(self):
+        assert sanitize_for_tts("") == ""
+
+    def test_tag_at_start(self):
+        assert sanitize_for_tts("[sighs] 또 그 얘기야.") == "[sighs] 또 그 얘기야."
+
+    def test_tag_mid_sentence_both_sides(self):
+        assert sanitize_for_tts("이건[whispers]비밀이야.") == "이건 [whispers] 비밀이야."
 
 
 class TestChunkSentences:
