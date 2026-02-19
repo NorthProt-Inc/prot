@@ -48,6 +48,7 @@ class Pipeline:
         self._memory = None
         self._graphrag = None
         self._embedder = None
+        self._reranker = None
         self._pool = None
 
         self._conversation_id = uuid4()
@@ -83,9 +84,11 @@ class Pipeline:
             from prot.embeddings import AsyncVoyageEmbedder
             from prot.memory import MemoryExtractor
             from prot.community import CommunityDetector
+            from prot.reranker import VoyageReranker
 
             self._graphrag = GraphRAGStore(pool=self._pool)
             self._embedder = AsyncVoyageEmbedder()
+            self._reranker = VoyageReranker()
             community_detector = CommunityDetector(
                 store=self._graphrag,
                 embedder=self._embedder,
@@ -94,6 +97,7 @@ class Pipeline:
                 store=self._graphrag,
                 embedder=self._embedder,
                 community_detector=community_detector,
+                reranker=self._reranker,
             )
         except Exception:
             logger.warning("Memory subsystem not available")
