@@ -64,6 +64,7 @@ class Pipeline:
         self._barge_in_grace: float = 1.5  # seconds to ignore VAD after SPEAKING starts
         self._background_tasks: set[asyncio.Task] = set()
         self._session_msg_offset: int = 0
+        self._exchange_count: int = 0
 
     @property
     def state(self) -> StateMachine:
@@ -445,6 +446,9 @@ class Pipeline:
         """Background task to extract and save memories — tracked for shutdown cleanup."""
         if not self._memory:
             return
+        self._exchange_count += 1
+        if self._exchange_count % settings.memory_extraction_interval != 0:
+            return
         query = self._current_transcript  # capture before potential barge-in reset
 
         async def _extract() -> None:
@@ -531,12 +535,21 @@ class Pipeline:
             except Exception:
                 logger.debug("Shutdown error", exc_info=True)
 
-        # Cancel background tasks before closing pool
+        # Cancel background tasks before final extraction (prevent race condition)
         for task in self._background_tasks:
             task.cancel()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
+
+        # Best-effort final extraction for unprocessed messages
+        if self._memory:
+            try:
+                messages = self._ctx.get_messages()
+                extraction = await self._memory.extract_incremental(messages)
+                await self._memory.save_extraction(extraction)
+            except Exception:
+                logger.debug("Final extraction failed", exc_info=True)
 
         # Export DB tables to CSV
         if self._pool is not None:

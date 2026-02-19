@@ -23,6 +23,14 @@ def sanitize_for_tts(text: str) -> str:
     return text.strip()
 
 
+def is_tool_result_message(msg: dict) -> bool:
+    """Check if a message contains only tool_result blocks."""
+    content = msg.get("content")
+    if not isinstance(content, list) or not content:
+        return False
+    return all(isinstance(b, dict) and b.get("type") == "tool_result" for b in content)
+
+
 def content_to_text(content) -> str:
     """Extract plain text from str or list of content blocks."""
     if isinstance(content, str):

@@ -11,25 +11,52 @@ from prot.config import settings
 from prot.embeddings import AsyncVoyageEmbedder
 from prot.graphrag import GraphRAGStore
 from prot.logging import get_logger, logged
-from prot.processing import content_to_text
+from prot.processing import content_to_text, is_tool_result_message
 
 logger = get_logger(__name__)
 
 
-EXTRACTION_PROMPT = """Extract entities and relationships from this conversation segment.
+EXTRACTION_PROMPT_BASE = """Extract entities and relationships from this conversation segment.
 The conversation may be in Korean or English. Keep entity names in their original language.
 
-{known_entities_block}
-
 Return JSON with this exact structure:
-{{
-  "entities": [{{"name": "...", "type": "person|place|concept|event|preference", "description": "..."}}],
-  "relationships": [{{"source": "...", "target": "...", "type": "...", "description": "..."}}]
-}}
+{
+  "entities": [{"name": "...", "type": "person|place|concept|event|preference", "description": "..."}],
+  "relationships": [{"source": "...", "target": "...", "type": "...", "description": "..."}]
+}
 
 Extract names, places, preferences, plans, opinions, and technical topics.
 When you encounter pronouns or references, resolve them to known entities where possible.
-Skip generic greetings and filler. If nothing meaningful, return empty arrays."""
+Skip generic greetings and filler. If nothing meaningful, return empty arrays.
+
+## Examples
+
+### Example 1
+Input:
+user: 오늘 민수랑 강남에서 점심 먹었어
+assistant: 민수는 어떤 사이예요?
+user: 대학교 때부터 친구야. 요즘 카카오에서 일해
+
+Output:
+{"entities": [{"name": "민수", "type": "person", "description": "대학교 때부터 친구, 카카오에서 근무"}, {"name": "강남", "type": "place", "description": "점심 식사 장소"}, {"name": "카카오", "type": "concept", "description": "민수의 직장"}], "relationships": [{"source": "민수", "target": "카카오", "type": "works_at", "description": "민수가 카카오에서 근무"}]}
+
+### Example 2
+Input:
+user: I'm planning a trip to Tokyo next month with Sarah
+assistant: Sounds fun! What are you planning to do there?
+user: We want to visit Akihabara and try some ramen spots Sarah found on Instagram
+
+Output:
+{"entities": [{"name": "Sarah", "type": "person", "description": "Travel companion for Tokyo trip"}, {"name": "Tokyo", "type": "place", "description": "Upcoming trip destination next month"}, {"name": "Akihabara", "type": "place", "description": "Planned visit during Tokyo trip"}], "relationships": [{"source": "Sarah", "target": "Tokyo", "type": "traveling_to", "description": "Sarah is traveling to Tokyo together with the user"}]}
+
+### Example 3
+Input:
+user: 요즘 Rust 배우고 있는데 생각보다 어렵다
+assistant: 어떤 부분이 어려워요?
+user: 소유권 개념이 좀 헷갈려. 근데 성능은 확실히 좋더라
+
+Output:
+{"entities": [{"name": "Rust", "type": "concept", "description": "현재 학습 중인 프로그래밍 언어, 소유권 개념이 어렵지만 성능이 좋다고 평가"}], "relationships": []}"""
 
 _KNOWN_ENTITIES_TEMPLATE = "Previously known entities: {names}. Link new information to these when relevant."
 
@@ -71,15 +98,16 @@ class MemoryExtractor:
         conversation_text = "\n".join(
             f"{m['role']}: {content_to_text(m['content'])}" for m in messages
         )
+        system_blocks = [
+            {"type": "text", "text": EXTRACTION_PROMPT_BASE, "cache_control": {"type": "ephemeral"}},
+        ]
         if known_entity_names:
-            block = _KNOWN_ENTITIES_TEMPLATE.format(names=", ".join(known_entity_names))
-        else:
-            block = ""
-        system = EXTRACTION_PROMPT.format(known_entities_block=block)
+            known_text = _KNOWN_ENTITIES_TEMPLATE.format(names=", ".join(known_entity_names))
+            system_blocks.append({"type": "text", "text": known_text})
         response = await self._llm.messages.create(
             model=settings.memory_extraction_model,
             max_tokens=2000,
-            system=system,
+            system=system_blocks,
             messages=[{"role": "user", "content": conversation_text}],
         )
         try:
@@ -171,10 +199,9 @@ class MemoryExtractor:
             logger.warning("Community rebuild failed", exc_info=True)
 
     async def extract_incremental(self, all_messages: list[dict]) -> dict:
-        """Extract from only the most recent conversation window."""
-        window_size = settings.memory_extraction_window_turns * 2  # user+assistant pairs
-        start = max(self._last_extracted_index, len(all_messages) - window_size)
-        segment = all_messages[start:]
+        """Extract from all unprocessed messages since last extraction."""
+        start = self._last_extracted_index
+        segment = [m for m in all_messages[start:] if not is_tool_result_message(m)]
         if not segment:
             return {"entities": [], "relationships": []}
         known_names = sorted(self._known_entities)

@@ -1,5 +1,5 @@
 import pytest
-from prot.processing import chunk_sentences, sanitize_for_tts, MAX_BUFFER_CHARS
+from prot.processing import chunk_sentences, is_tool_result_message, sanitize_for_tts, MAX_BUFFER_CHARS
 
 
 class TestChunkSentences:
@@ -51,6 +51,44 @@ class TestChunkSentences:
         sentences, remainder = chunk_sentences(text)
         assert remainder == "미완성"
         assert sentences == ["완성."]
+
+
+class TestIsToolResultMessage:
+    def test_tool_result_only(self):
+        msg = {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+        ]}
+        assert is_tool_result_message(msg) is True
+
+    def test_multiple_tool_results(self):
+        msg = {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+            {"type": "tool_result", "tool_use_id": "t2", "content": "done"},
+        ]}
+        assert is_tool_result_message(msg) is True
+
+    def test_mixed_content_blocks(self):
+        msg = {"role": "user", "content": [
+            {"type": "text", "text": "hello"},
+            {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+        ]}
+        assert is_tool_result_message(msg) is False
+
+    def test_text_only(self):
+        msg = {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+        assert is_tool_result_message(msg) is False
+
+    def test_string_content(self):
+        msg = {"role": "user", "content": "hello"}
+        assert is_tool_result_message(msg) is False
+
+    def test_empty_content_list(self):
+        msg = {"role": "user", "content": []}
+        assert is_tool_result_message(msg) is False
+
+    def test_no_content_key(self):
+        msg = {"role": "user"}
+        assert is_tool_result_message(msg) is False
 
 
 class TestSanitizeForTts:
