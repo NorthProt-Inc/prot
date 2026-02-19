@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     rerank_top_k: int = 5
 
     # Memory
-    memory_extraction_model: str = "claude-haiku-4-5-20251001"
+    memory_extraction_model: str = "claude-sonnet-4-6"
     rag_context_target_tokens: int = 3000
     rag_top_k: int = 10
 
