@@ -12,7 +12,7 @@ from prot.conversation_log import ConversationLogger
 from prot.llm import LLMClient
 from prot.persona import load_persona
 from prot.playback import AudioPlayer
-from prot.processing import chunk_sentences, sanitize_for_tts
+from prot.processing import chunk_sentences
 from prot.state import State, StateMachine
 from prot.stt import STTClient
 from prot.tts import TTSClient
@@ -254,6 +254,13 @@ class Pipeline:
 
                 async def _produce() -> None:
                     nonlocal buffer, _last_pressure_log
+                    _tts_rate = int(settings.elevenlabs_output_format.split("_")[1])
+                    _silence_ms = settings.tts_sentence_silence_ms
+                    _silence = (
+                        b"\x00" * (int(_tts_rate * _silence_ms / 1000) * 2)
+                        if _silence_ms > 0
+                        else b""
+                    )
                     try:
                         async for chunk in self._llm.stream_response(
                             system_blocks, tools, messages
@@ -264,10 +271,9 @@ class Pipeline:
                             buffer += chunk
                             sentences, buffer = chunk_sentences(buffer)
                             for sentence in sentences:
-                                clean = sanitize_for_tts(sentence)
-                                if not clean:
+                                if not sentence.strip():
                                     continue
-                                async for audio in self._tts.stream_audio(clean):
+                                async for audio in self._tts.stream_audio(sentence):
                                     if self._sm.state == State.INTERRUPTED:
                                         return
                                     await audio_q.put(audio)
@@ -276,14 +282,14 @@ class Pipeline:
                                     if qsz >= 28 and now - _last_pressure_log >= 5.0:
                                         logger.warning("Queue pressure", qsize=qsz)
                                         _last_pressure_log = now
+                                if _silence and self._sm.state != State.INTERRUPTED:
+                                    await audio_q.put(_silence)
                         # Flush remaining
                         if buffer.strip() and self._sm.state != State.INTERRUPTED:
-                            clean = sanitize_for_tts(buffer)
-                            if clean:
-                                async for audio in self._tts.stream_audio(clean):
-                                    if self._sm.state == State.INTERRUPTED:
-                                        return
-                                    await audio_q.put(audio)
+                            async for audio in self._tts.stream_audio(buffer):
+                                if self._sm.state == State.INTERRUPTED:
+                                    return
+                                await audio_q.put(audio)
                     finally:
                         await audio_q.put(None)  # sentinel
 

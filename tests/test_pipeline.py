@@ -405,6 +405,8 @@ class TestProcessResponse:
         with patch("prot.pipeline.settings") as mock_settings:
             mock_settings.claude_model = "test"
             mock_settings.active_timeout = 999
+            mock_settings.tts_sentence_silence_ms = 0
+            mock_settings.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         p._player.start.assert_awaited_once()
@@ -438,12 +440,100 @@ class TestProcessResponse:
         with patch("prot.pipeline.settings") as mock_settings:
             mock_settings.claude_model = "test"
             mock_settings.active_timeout = 999
+            mock_settings.tts_sentence_silence_ms = 0
+            mock_settings.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         # Should NOT have transitioned to ACTIVE (was interrupted)
         assert p._sm.state != State.ACTIVE
         # finish() should not be called when interrupted
         p._player.finish.assert_not_awaited()
+
+
+class TestSilencePadding:
+    """_produce() — inter-sentence silence padding."""
+
+    async def test_silence_between_sentences(self):
+        """Two sentences should have a silence buffer between them."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        async def fake_stream(*a, **kw):
+            yield "First sentence. Second sentence."
+
+        p._llm.stream_response = fake_stream
+
+        tts_call_count = 0
+
+        async def fake_tts(text):
+            nonlocal tts_call_count
+            tts_call_count += 1
+            yield b"\xaa" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        played_chunks: list[bytes] = []
+        original_play = p._player.play_chunk
+
+        async def capture_play(data):
+            played_chunks.append(data)
+
+        p._player.play_chunk = capture_play
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 200
+            ms.elevenlabs_output_format = "pcm_24000"
+            ms.context_max_turns = 10
+            await p._process_response()
+
+        assert tts_call_count == 2
+        # Expected: audio1, silence, audio2, silence
+        # (silence after every sentence — last one is harmless trailing gap)
+        # Silence = 24000 * 200/1000 * 2 = 9600 bytes of zeros
+        silence = b"\x00" * 9600
+        assert len(played_chunks) == 4
+        assert played_chunks[0] == b"\xaa" * 100
+        assert played_chunks[1] == silence
+        assert played_chunks[2] == b"\xaa" * 100
+        assert played_chunks[3] == silence
+
+    async def test_no_silence_when_disabled(self):
+        """When tts_sentence_silence_ms=0, no silence is inserted."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        async def fake_stream(*a, **kw):
+            yield "First sentence. Second sentence."
+
+        p._llm.stream_response = fake_stream
+
+        async def fake_tts(text):
+            yield b"\xaa" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        played_chunks: list[bytes] = []
+
+        async def capture_play(data):
+            played_chunks.append(data)
+
+        p._player.play_chunk = capture_play
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
+            ms.context_max_turns = 10
+            await p._process_response()
+
+        # Only audio chunks, no silence
+        assert all(chunk == b"\xaa" * 100 for chunk in played_chunks)
+        assert len(played_chunks) == 2
 
 
 class TestResponseContentRouting:
@@ -470,6 +560,8 @@ class TestResponseContentRouting:
         with patch("prot.pipeline.settings") as mock_settings:
             mock_settings.claude_model = "test"
             mock_settings.active_timeout = 999
+            mock_settings.tts_sentence_silence_ms = 0
+            mock_settings.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         # Context should receive the content blocks, not plain text
@@ -497,6 +589,8 @@ class TestResponseContentRouting:
         with patch("prot.pipeline.settings") as mock_settings:
             mock_settings.claude_model = "test"
             mock_settings.active_timeout = 999
+            mock_settings.tts_sentence_silence_ms = 0
+            mock_settings.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         # DB save should receive plain text
@@ -526,6 +620,8 @@ class TestResponseContentRouting:
         with patch("prot.pipeline.settings") as mock_settings:
             mock_settings.claude_model = "test"
             mock_settings.active_timeout = 999
+            mock_settings.tts_sentence_silence_ms = 0
+            mock_settings.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         p._ctx.add_message.assert_called_once_with("assistant", "Fallback.")
@@ -719,6 +815,8 @@ class TestToolUseHandling:
         with patch("prot.pipeline.settings") as ms:
             ms.claude_model = "test"
             ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         assert call_count == 2
@@ -772,6 +870,8 @@ class TestToolUseHandling:
         with patch("prot.pipeline.settings") as ms:
             ms.claude_model = "test"
             ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         assert call_count == 2
@@ -856,6 +956,8 @@ class TestToolLoopExhaustion:
         with patch("prot.pipeline.settings") as ms:
             ms.claude_model = "test"
             ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         assert len(captured_tools) == 3
@@ -907,6 +1009,8 @@ class TestInterruptionDuringToolExec:
         with patch("prot.pipeline.settings") as ms:
             ms.claude_model = "test"
             ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         # Should have bailed out; state managed by barge-in handler
@@ -936,6 +1040,8 @@ class TestExceptionRecovery:
         with patch("prot.pipeline.settings") as ms:
             ms.claude_model = "test"
             ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         assert p._sm.state == State.ACTIVE
@@ -962,6 +1068,8 @@ class TestExceptionRecovery:
         with patch("prot.pipeline.settings") as ms:
             ms.claude_model = "test"
             ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         # State should remain LISTENING, not forced to ACTIVE
@@ -1097,6 +1205,8 @@ class TestPipelineHassRouting:
         with patch("prot.pipeline.settings") as ms:
             ms.claude_model = "test"
             ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         mock_registry.execute.assert_awaited_once_with("hass_control", tool_block.input)
@@ -1124,6 +1234,8 @@ class TestPipelineHassRouting:
         with patch("prot.pipeline.settings") as ms:
             ms.claude_model = "test"
             ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
         p._ctx.build_tools.assert_called_with(hass_registry=mock_registry)

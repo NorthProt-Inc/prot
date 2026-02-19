@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     elevenlabs_model: str = "eleven_v3"
     elevenlabs_voice_id: str = "s3lKyrFAzTUpzy3ZLwbM"
     elevenlabs_output_format: str = "pcm_24000"
+    tts_sentence_silence_ms: int = 200
 
     # HASS
     hass_url: str = "http://localhost:8123"

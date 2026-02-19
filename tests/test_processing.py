@@ -1,5 +1,5 @@
 import pytest
-from prot.processing import chunk_sentences, is_tool_result_message, sanitize_for_tts, MAX_BUFFER_CHARS
+from prot.processing import chunk_sentences, is_tool_result_message, MAX_BUFFER_CHARS
 
 
 class TestChunkSentences:
@@ -89,32 +89,3 @@ class TestIsToolResultMessage:
     def test_no_content_key(self):
         msg = {"role": "user"}
         assert is_tool_result_message(msg) is False
-
-
-class TestSanitizeForTts:
-    def test_preserves_audio_tags(self):
-        assert sanitize_for_tts("비효율이지 [sarcastic].") == "비효율이지 [sarcastic]."
-
-    def test_special_char_replaced_with_space(self):
-        assert sanitize_for_tts("강조**포인트") == "강조 포인트"
-
-    def test_tilde_replaced(self):
-        assert sanitize_for_tts("그래~[sarcastic].") == "그래 [sarcastic]."
-
-    def test_no_double_spaces(self):
-        assert sanitize_for_tts("앞 ~뒤") == "앞 뒤"
-
-    def test_preserves_punctuation(self):
-        assert sanitize_for_tts("정말? 그래! 좋아.") == "정말? 그래! 좋아."
-
-    def test_preserves_plain_text(self):
-        assert sanitize_for_tts("일반 한국어 텍스트") == "일반 한국어 텍스트"
-
-    def test_empty_string(self):
-        assert sanitize_for_tts("") == ""
-
-    def test_multiple_special_chars(self):
-        assert sanitize_for_tts("**bold** and `code`") == "bold and code"
-
-    def test_hash_header(self):
-        assert sanitize_for_tts("# 제목") == "제목"
