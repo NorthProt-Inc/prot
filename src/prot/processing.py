@@ -4,8 +4,23 @@ import re
 
 _RE_SENTENCE_SPLIT = re.compile(r'(?<=[.!?~])\s+')
 _RE_SENTENCE_END = re.compile(r'[.!?~]$')
+_RE_SPECIAL = re.compile(r'[^\w\s.,!?\[\]]')
+_RE_MULTI_SPACE = re.compile(r' {2,}')
 
 MAX_BUFFER_CHARS = 2000
+
+
+def sanitize_for_tts(text: str) -> str:
+    """Replace special characters with spaces to prevent TTS gluing.
+
+    ElevenLabs silently strips special characters (*, ~, #, etc.),
+    which causes adjacent text to merge without gaps.
+    Preserves word chars, whitespace, punctuation (.,!?) and
+    audio tag brackets ([]).
+    """
+    text = _RE_SPECIAL.sub(' ', text)
+    text = _RE_MULTI_SPACE.sub(' ', text)
+    return text.strip()
 
 
 def content_to_text(content) -> str:
