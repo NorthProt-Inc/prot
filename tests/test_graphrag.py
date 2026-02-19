@@ -368,10 +368,10 @@ class TestGetEntityNames:
         assert names == []
 
 
-class TestUpsertEntityDescriptionAccumulation:
-    """upsert_entity SQL should accumulate descriptions instead of overwriting."""
+class TestUpsertEntityDescriptionReplacement:
+    """upsert_entity SQL should replace description (not append) on conflict."""
 
-    async def test_upsert_entity_accumulates_description(self):
+    async def test_upsert_entity_replaces_description(self):
         pool, conn = make_mock_pool()
         store = GraphRAGStore(pool)
 
@@ -386,9 +386,11 @@ class TestUpsertEntityDescriptionAccumulation:
 
         call = conn.fetchrow.call_args
         sql = call.args[0]
-        assert "LEFT(" in sql
-        assert "POSITION(" in sql
-        assert "500" in sql
+        # New logic: replace description (EXCLUDED.description), not append
+        assert "EXCLUDED.description" in sql
+        # Old append logic should NOT be present
+        assert "LEFT(" not in sql
+        assert "||" not in sql
 
 
 class TestGetEntityNeighbors:

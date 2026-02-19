@@ -21,13 +21,37 @@ The conversation may be in Korean or English. Keep entity names in their origina
 
 Return JSON with this exact structure:
 {
-  "entities": [{"name": "...", "type": "person|place|concept|event|preference", "description": "..."}],
+  "entities": [{"name": "...", "type": "person|place|organization|technology|event|preference", "description": "..."}],
   "relationships": [{"source": "...", "target": "...", "type": "...", "description": "..."}]
 }
 
 Extract names, places, preferences, plans, opinions, and technical topics.
 When you encounter pronouns or references, resolve them to known entities where possible.
 Skip generic greetings and filler. If nothing meaningful, return empty arrays.
+
+## Entity Type Guidelines
+
+Choose the most specific type. Avoid defaulting to "concept":
+- **person**: Named individuals (민수, Sarah, Elon Musk)
+- **place**: Physical locations (강남, Tokyo, Akihabara)
+- **organization**: Companies, institutions, teams (카카오, Google, MIT)
+- **technology**: Programming languages, frameworks, tools, models, APIs (Rust, React, Claude, pgvector)
+- **event**: Time-bound occurrences (trips, meetings, releases, deadlines)
+- **preference**: Expressed likes, dislikes, opinions, choices (좋아하는 음식, preferred IDE)
+
+## Relationship Type Constraints
+
+Use ONLY these canonical types:
+- **Structural**: contains, part_of, instance_of
+- **Causal**: causes, enables, precedes, triggers
+- **Dependency**: requires, depends_on, supports
+- **Association**: related_to, similar_to, contrasts_with, alternative_to
+- **Social**: works_at, works_with, knows, created_by, owns
+- **Action**: uses, produces, improves, replaces
+- **Spatial**: located_in
+- **Preference**: prefers, interested_in
+
+If none of the above fits, use "related_to". Never invent new relationship types.
 
 ## Examples
 
@@ -38,7 +62,7 @@ assistant: 민수는 어떤 사이예요?
 user: 대학교 때부터 친구야. 요즘 카카오에서 일해
 
 Output:
-{"entities": [{"name": "민수", "type": "person", "description": "대학교 때부터 친구, 카카오에서 근무"}, {"name": "강남", "type": "place", "description": "점심 식사 장소"}, {"name": "카카오", "type": "concept", "description": "민수의 직장"}], "relationships": [{"source": "민수", "target": "카카오", "type": "works_at", "description": "민수가 카카오에서 근무"}]}
+{"entities": [{"name": "민수", "type": "person", "description": "대학교 때부터 친구, 카카오에서 근무"}, {"name": "강남", "type": "place", "description": "점심 식사 장소"}, {"name": "카카오", "type": "organization", "description": "민수의 직장"}], "relationships": [{"source": "민수", "target": "카카오", "type": "works_at", "description": "민수가 카카오에서 근무"}]}
 
 ### Example 2
 Input:
@@ -47,7 +71,7 @@ assistant: Sounds fun! What are you planning to do there?
 user: We want to visit Akihabara and try some ramen spots Sarah found on Instagram
 
 Output:
-{"entities": [{"name": "Sarah", "type": "person", "description": "Travel companion for Tokyo trip"}, {"name": "Tokyo", "type": "place", "description": "Upcoming trip destination next month"}, {"name": "Akihabara", "type": "place", "description": "Planned visit during Tokyo trip"}], "relationships": [{"source": "Sarah", "target": "Tokyo", "type": "traveling_to", "description": "Sarah is traveling to Tokyo together with the user"}]}
+{"entities": [{"name": "Sarah", "type": "person", "description": "Travel companion for Tokyo trip"}, {"name": "Tokyo", "type": "place", "description": "Upcoming trip destination next month"}, {"name": "Akihabara", "type": "place", "description": "Planned visit during Tokyo trip"}], "relationships": [{"source": "Sarah", "target": "Tokyo", "type": "related_to", "description": "Sarah is traveling to Tokyo together with the user"}]}
 
 ### Example 3
 Input:
@@ -56,7 +80,7 @@ assistant: 어떤 부분이 어려워요?
 user: 소유권 개념이 좀 헷갈려. 근데 성능은 확실히 좋더라
 
 Output:
-{"entities": [{"name": "Rust", "type": "concept", "description": "현재 학습 중인 프로그래밍 언어, 소유권 개념이 어렵지만 성능이 좋다고 평가"}], "relationships": []}"""
+{"entities": [{"name": "Rust", "type": "technology", "description": "현재 학습 중인 프로그래밍 언어, 소유권 개념이 어렵지만 성능이 좋다고 평가"}], "relationships": []}"""
 
 _KNOWN_ENTITIES_TEMPLATE = "Previously known entities: {names}. Link new information to these when relevant."
 
