@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     context_max_turns: int = 10
 
     # TTS
-    elevenlabs_model: str = "eleven_multilingual_v2"
-    elevenlabs_voice_id: str = "Fahco4VZzobUeiPqni1S"
+    elevenlabs_model: str = "eleven_v3"
+    elevenlabs_voice_id: str = "s3lKyrFAzTUpzy3ZLwbM"
     elevenlabs_output_format: str = "pcm_24000"
 
     # HASS
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     # Memory
     memory_extraction_model: str = "claude-sonnet-4-6"
     memory_extraction_window_turns: int = 3
-    rag_context_target_tokens: int = 3000
+    rag_context_target_tokens: int = 4096
     rag_top_k: int = 10
 
     # Community detection

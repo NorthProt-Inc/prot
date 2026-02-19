@@ -1,7 +1,7 @@
 import httpx
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from prot.tts import TTSClient
+from prot.tts import TTSClient, _VOICE_SETTINGS
 
 
 @pytest.mark.asyncio
@@ -50,6 +50,7 @@ class TestTTSClient:
             assert "voice_id" in call_kwargs.kwargs
             assert "model_id" in call_kwargs.kwargs
             assert "output_format" in call_kwargs.kwargs
+            assert call_kwargs.kwargs["voice_settings"] == _VOICE_SETTINGS
 
     async def test_stream_audio_skips_non_bytes(self):
         mock_response = AsyncMock()

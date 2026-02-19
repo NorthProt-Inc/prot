@@ -1,16 +1,24 @@
 from collections.abc import AsyncIterator
 
 import httpx
-from elevenlabs import AsyncElevenLabs
+from elevenlabs import AsyncElevenLabs, VoiceSettings
 
 from prot.config import settings
 from prot.log import get_logger, logged
 
 logger = get_logger(__name__)
 
+_VOICE_SETTINGS = VoiceSettings(
+    stability=0.0,
+    similarity_boost=0.75,
+    style=0.2,
+    use_speaker_boost=True,
+    speed=1.0,
+)
+
 
 class TTSClient:
-    """Streaming TTS client using ElevenLabs Flash v2.5."""
+    """Streaming TTS client using ElevenLabs."""
 
     def __init__(self, api_key: str | None = None) -> None:
         self._client = AsyncElevenLabs(
@@ -29,6 +37,7 @@ class TTSClient:
                 text=text,
                 model_id=settings.elevenlabs_model,
                 output_format=settings.elevenlabs_output_format,
+                voice_settings=_VOICE_SETTINGS,
             ):
                 if self._cancelled:
                     break
