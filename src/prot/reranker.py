@@ -45,4 +45,7 @@ class VoyageReranker:
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
-        await self._client.close()
+        if hasattr(self._client, "close"):
+            await self._client.close()
+        elif hasattr(self._client, "aclose"):
+            await self._client.aclose()
