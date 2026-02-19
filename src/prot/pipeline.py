@@ -12,7 +12,7 @@ from prot.conversation_log import ConversationLogger
 from prot.llm import LLMClient
 from prot.persona import load_persona
 from prot.playback import AudioPlayer
-from prot.processing import chunk_sentences
+from prot.processing import chunk_sentences, sanitize_for_tts
 from prot.state import State, StateMachine
 from prot.stt import STTClient
 from prot.tts import TTSClient
@@ -119,14 +119,6 @@ class Pipeline:
                 await self._memory.seed_known_entities()
         except Exception:
             logger.debug("Entity seed failed", exc_info=True)
-
-        # Pre-load RAG context
-        try:
-            if self._memory:
-                rag_text = await self._memory.pre_load_context("general")
-                self._ctx.update_rag_context(rag_text)
-        except Exception:
-            logger.debug("RAG pre-load failed", exc_info=True)
 
         # Pre-warm TTS connection pool
         try:
@@ -261,7 +253,7 @@ class Pipeline:
                             buffer += chunk
                             sentences, buffer = chunk_sentences(buffer)
                             for sentence in sentences:
-                                clean = sentence.strip()
+                                clean = sanitize_for_tts(sentence)
                                 if not clean:
                                     continue
                                 async for audio in self._tts.stream_audio(clean):
@@ -275,7 +267,7 @@ class Pipeline:
                                         _last_pressure_log = now
                         # Flush remaining
                         if buffer.strip() and self._sm.state != State.INTERRUPTED:
-                            clean = buffer.strip()
+                            clean = sanitize_for_tts(buffer)
                             if clean:
                                 async for audio in self._tts.stream_audio(clean):
                                     if self._sm.state == State.INTERRUPTED:
@@ -447,6 +439,7 @@ class Pipeline:
         """Background task to extract and save memories — tracked for shutdown cleanup."""
         if not self._memory:
             return
+        query = self._current_transcript  # capture before potential barge-in reset
 
         async def _extract() -> None:
             try:
@@ -455,10 +448,8 @@ class Pipeline:
                 await self._memory.save_extraction(extraction)
 
                 # Refresh RAG context
-                if self._current_transcript:
-                    rag = await self._memory.pre_load_context(
-                        self._current_transcript
-                    )
+                if query:
+                    rag = await self._memory.pre_load_context(query)
                     self._ctx.update_rag_context(rag)
             except Exception:
                 logger.warning("Memory extraction failed", exc_info=True)
