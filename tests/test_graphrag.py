@@ -392,39 +392,45 @@ class TestUpsertEntityDescriptionAccumulation:
 
 
 class TestGetEntityNeighbors:
-    """get_entity_neighbors should return neighboring entities."""
+    """get_entity_neighbors should return neighboring entities with relationship info."""
 
     async def test_get_entity_neighbors(self) -> None:
         pool, conn = make_mock_pool()
         store = GraphRAGStore(pool)
 
         entity_id = uuid4()
-        neighbor1_id = uuid4()
-        neighbor2_id = uuid4()
-
         rows = [
             mock_record(
-                id=neighbor1_id,
+                id=uuid4(),
                 name="Neighbor1",
                 entity_type="person",
                 description="First neighbor",
+                relation_type="works_with",
+                rel_description="Collaborates on project X",
             ),
             mock_record(
-                id=neighbor2_id,
+                id=uuid4(),
                 name="Neighbor2",
                 entity_type="organization",
                 description="Second neighbor",
+                relation_type="member_of",
+                rel_description="Part of the team",
             ),
         ]
         conn.fetch = AsyncMock(return_value=rows)
 
-        results = await store.get_entity_neighbors(entity_id, max_depth=2)
+        results = await store.get_entity_neighbors(entity_id, max_depth=1)
 
         assert len(results) == 2
         assert all(isinstance(r, dict) for r in results)
         assert results[0]["name"] == "Neighbor1"
         assert results[1]["name"] == "Neighbor2"
+        assert results[0]["relation_type"] == "works_with"
+        assert results[0]["rel_description"] == "Collaborates on project X"
+        assert results[1]["relation_type"] == "member_of"
+        assert results[1]["rel_description"] == "Part of the team"
 
-        # Verify recursive CTE is used
+        # Verify direct JOIN query (not recursive CTE)
         call = conn.fetch.call_args
-        assert "RECURSIVE" in call.args[0]
+        assert "relationships" in call.args[0]
+        assert "relation_type" in call.args[0]

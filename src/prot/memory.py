@@ -214,7 +214,9 @@ class MemoryExtractor:
             if not _add(line):
                 break
             for n in neighbors[:3]:
-                nline = f"  > {n['name']}: {n['description']}"
+                rel = f" ({n['relation_type']})" if n.get("relation_type") else ""
+                desc = n.get("rel_description") or n["description"]
+                nline = f"  > {n['name']}{rel}: {desc}"
                 if not _add(nline):
                     break
 

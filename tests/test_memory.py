@@ -292,6 +292,27 @@ class TestMemoryExtractor:
             assert result == {"entities": [], "relationships": []}
             mock_logger.warning.assert_called_once()
 
+    async def test_pre_load_context_includes_relationship_info(self):
+        """Neighbor formatting should include relation_type."""
+        mock_store = AsyncMock()
+        mock_store.search_entities_semantic.return_value = [
+            {"id": "e1", "name": "Bob", "entity_type": "person", "description": "A dev"},
+        ]
+        mock_store.get_entity_neighbors.return_value = [
+            {"name": "Alice", "entity_type": "person", "description": "A designer",
+             "relation_type": "works_with", "rel_description": "Collaborates on prot"},
+        ]
+        mock_store.search_communities.return_value = []
+        mock_embedder = AsyncMock()
+        mock_embedder.embed_query_contextual.return_value = [0.1] * 1024
+
+        extractor = MemoryExtractor(
+            anthropic_key="test", store=mock_store, embedder=mock_embedder,
+        )
+        text = await extractor.pre_load_context("Bob's team")
+        assert "works_with" in text
+        assert "Alice" in text
+
     async def test_pre_load_context_uses_reranker(self):
         """Verify reranker.rerank is called after semantic search with correct args."""
         mock_store = AsyncMock()

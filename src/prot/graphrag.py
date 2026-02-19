@@ -72,6 +72,19 @@ class GraphRAGStore:
             row = await c.fetchrow(query, *args)
             return row["id"]
 
+    async def get_entity_id_by_name(
+        self, name: str, namespace: str = "default",
+        conn: asyncpg.Connection | None = None,
+    ) -> UUID | None:
+        """Look up entity ID by name. Returns None if not found."""
+        query = "SELECT id FROM entities WHERE namespace = $1 AND name = $2"
+        if conn is not None:
+            row = await conn.fetchrow(query, namespace, name)
+        else:
+            async with self._pool.acquire() as c:
+                row = await c.fetchrow(query, namespace, name)
+        return row["id"] if row else None
+
     async def get_entity_names(self, namespace: str = "default") -> list[str]:
         """Return all entity names ordered by mention count."""
         async with self._pool.acquire() as conn:
@@ -176,34 +189,25 @@ class GraphRAGStore:
     async def get_entity_neighbors(
         self, entity_id: UUID, max_depth: int = 1
     ) -> list[dict]:
-        """Get neighboring entities via relationships using recursive CTE."""
+        """Get neighboring entities with relationship info.
+
+        Note: Only depth=1 is supported. The max_depth parameter is
+        retained for API compatibility but ignored.
+        """
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                WITH RECURSIVE neighbors AS (
-                    SELECT id, 1 AS depth FROM (
-                        SELECT target_id AS id
-                        FROM relationships WHERE source_id = $1
-                        UNION
-                        SELECT source_id AS id
-                        FROM relationships WHERE target_id = $1
-                    ) base
-                    UNION ALL
-                    SELECT
-                        CASE WHEN r.source_id = n.id
-                             THEN r.target_id ELSE r.source_id END,
-                        n.depth + 1
-                    FROM neighbors n
-                    JOIN relationships r
-                        ON r.source_id = n.id OR r.target_id = n.id
-                    WHERE n.depth < $2
-                )
-                SELECT DISTINCT e.id, e.name, e.entity_type, e.description
-                FROM neighbors n
-                JOIN entities e ON e.id = n.id
-                WHERE e.id != $1
+                SELECT e.id, e.name, e.entity_type, e.description,
+                       r.relation_type, r.description AS rel_description
+                FROM relationships r
+                JOIN entities e ON e.id = CASE
+                    WHEN r.source_id = $1 THEN r.target_id
+                    ELSE r.source_id
+                END
+                WHERE (r.source_id = $1 OR r.target_id = $1)
+                  AND e.id != $1
+                ORDER BY r.weight DESC
                 """,
                 entity_id,
-                max_depth,
             )
             return [dict(r) for r in rows]
