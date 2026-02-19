@@ -77,7 +77,6 @@ cp .env.example .env
 | `DB_POOL_MAX` | No | `10` | DB 커넥션 풀 최대 크기 |
 | `DB_EXPORT_DIR` | No | `data/db` | DB 종료 시 CSV 내보내기 디렉토리 |
 | `VOYAGE_API_KEY` | No | — | Voyage AI 임베딩 API 키 |
-| `VOYAGE_MODEL` | No | `voyage-4` | Voyage 임베딩 모델 |
 | `VOYAGE_CONTEXT_MODEL` | No | `voyage-context-3` | Contextual 임베딩 모델 |
 | `RERANK_MODEL` | No | `rerank-2.5` | Voyage 리랭커 모델 |
 | `RERANK_TOP_K` | No | `5` | 리랭커 상위 결과 수 |

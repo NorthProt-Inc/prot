@@ -139,7 +139,6 @@ systemctl --user enable --now prot
 | `ELEVENLABS_MODEL` | No | `eleven_v3` | ElevenLabs TTS model |
 | `ELEVENLABS_OUTPUT_FORMAT` | No | `pcm_24000` | TTS output audio format |
 | `VOYAGE_API_KEY` | No | — | Voyage AI API key for embeddings |
-| `VOYAGE_MODEL` | No | `voyage-4` | Voyage embedding model |
 | `VOYAGE_CONTEXT_MODEL` | No | `voyage-context-3` | Contextual embedding model |
 | `RERANK_MODEL` | No | `rerank-2.5` | Voyage reranker model |
 | `RERANK_TOP_K` | No | `5` | Reranker top-K results |
