@@ -170,6 +170,100 @@ class HassRegistry:
         }
         return [hass_control, hass_query]
 
+    async def execute(self, tool_name: str, tool_input: dict) -> dict:
+        """Dispatch tool call to the appropriate handler."""
+        if tool_name == "hass_control":
+            return await self.execute_control(tool_input)
+        elif tool_name == "hass_query":
+            return await self.execute_query(tool_input)
+        return {"error": f"Unknown HASS tool: {tool_name}"}
+
+    async def execute_control(self, tool_input: dict) -> dict:
+        """Execute a control action (turn_on/turn_off/toggle)."""
+        entity_id = tool_input.get("entity_id", "")
+        action = tool_input.get("action", "")
+
+        known_ids = {e["entity_id"] for e in self._entities}
+        if entity_id not in known_ids:
+            return {"error": f"Invalid entity_id: {entity_id}"}
+
+        domain = entity_id.split(".", 1)[0]
+        service_data: dict = {"entity_id": entity_id}
+
+        if domain == "light":
+            brightness = tool_input.get("brightness")
+            color = tool_input.get("color")
+            color_temp = tool_input.get("color_temp_kelvin")
+
+            if brightness is not None:
+                service_data["brightness_pct"] = brightness
+            if color_temp is not None:
+                service_data["color_temp_kelvin"] = color_temp
+            elif color is not None:
+                rgb = parse_color(color)
+                if rgb:
+                    service_data["rgb_color"] = rgb
+
+        headers = {"Authorization": f"Bearer {self._token}"}
+        try:
+            r = await self._client.post(
+                f"{self._url}/api/services/{domain}/{action}",
+                headers=headers,
+                json=service_data,
+            )
+            if r.status_code != 200:
+                return {"error": f"HASS returned {r.status_code}"}
+        except Exception as exc:
+            return {"error": f"HASS request failed: {exc}"}
+
+        parts = [f"{entity_id} {action.replace('_', ' ')}"]
+        if "color_temp_kelvin" in service_data:
+            parts.append(f"({service_data['color_temp_kelvin']}K)")
+        elif "rgb_color" in service_data:
+            parts.append(f"({tool_input.get('color', '')})")
+        if "brightness_pct" in service_data:
+            parts.append(f"({service_data['brightness_pct']}%)")
+
+        return {"success": True, "message": " ".join(parts)}
+
+    async def execute_query(self, tool_input: dict) -> dict:
+        """Execute a query (get_state or list_entities)."""
+        query_type = tool_input.get("query_type", "")
+
+        if query_type == "list_entities":
+            return {
+                "entities": [
+                    {
+                        "entity_id": e["entity_id"],
+                        "friendly_name": e["attributes"].get("friendly_name", ""),
+                    }
+                    for e in self._entities
+                ]
+            }
+
+        if query_type == "get_state":
+            entity_id = tool_input.get("entity_id")
+            if not entity_id:
+                return {"error": "entity_id is required for get_state"}
+
+            known_ids = {e["entity_id"] for e in self._entities}
+            if entity_id not in known_ids:
+                return {"error": f"Invalid entity_id: {entity_id}"}
+
+            headers = {"Authorization": f"Bearer {self._token}"}
+            try:
+                r = await self._client.get(
+                    f"{self._url}/api/states/{entity_id}",
+                    headers=headers,
+                )
+                if r.status_code != 200:
+                    return {"error": f"HASS returned {r.status_code}"}
+                return r.json()
+            except Exception as exc:
+                return {"error": f"HASS request failed: {exc}"}
+
+        return {"error": f"Unknown query_type: {query_type}"}
+
     async def close(self) -> None:
         """Close the httpx client."""
         await self._client.aclose()

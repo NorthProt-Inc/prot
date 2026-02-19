@@ -183,3 +183,201 @@ class TestHassRegistryBuildToolSchemas:
         control = next(t for t in tools if t["name"] == "hass_control")
         assert "light.wiz_1" in control["description"]
         assert "WiZ RGBW" in control["description"]
+
+
+class TestHassRegistryExecuteControl:
+    async def test_turn_on_light_with_kelvin(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        registry._client = AsyncMock()
+        registry._client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        result = await registry.execute_control({
+            "entity_id": "light.wiz_1",
+            "action": "turn_on",
+            "color_temp_kelvin": 4000,
+        })
+        assert result["success"] is True
+        call_args = registry._client.post.call_args
+        assert "/api/services/light/turn_on" in call_args[0][0]
+        body = call_args[1]["json"]
+        assert body["entity_id"] == "light.wiz_1"
+        assert body["color_temp_kelvin"] == 4000
+
+    async def test_turn_on_light_with_color_name(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        registry._client = AsyncMock()
+        registry._client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        result = await registry.execute_control({
+            "entity_id": "light.wiz_1",
+            "action": "turn_on",
+            "color": "red",
+        })
+        assert result["success"] is True
+        body = registry._client.post.call_args[1]["json"]
+        assert body["rgb_color"] == [255, 0, 0]
+        assert "color" not in body
+
+    async def test_kelvin_takes_priority_over_color(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        registry._client = AsyncMock()
+        registry._client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        await registry.execute_control({
+            "entity_id": "light.wiz_1",
+            "action": "turn_on",
+            "color": "red",
+            "color_temp_kelvin": 3000,
+        })
+        body = registry._client.post.call_args[1]["json"]
+        assert "color_temp_kelvin" in body
+        assert "rgb_color" not in body
+
+    async def test_brightness_converted_to_brightness_pct(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        registry._client = AsyncMock()
+        registry._client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        await registry.execute_control({
+            "entity_id": "light.wiz_1",
+            "action": "turn_on",
+            "brightness": 80,
+        })
+        body = registry._client.post.call_args[1]["json"]
+        assert body["brightness_pct"] == 80
+        assert "brightness" not in body
+
+    async def test_fan_turn_off_no_light_params(self):
+        """Non-light domains: only entity_id in service_data."""
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "fan.vital_100s", "attributes": {"friendly_name": "Vital"}},
+        ]
+        registry._client = AsyncMock()
+        registry._client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        result = await registry.execute_control({
+            "entity_id": "fan.vital_100s",
+            "action": "turn_off",
+            "brightness": 50,
+        })
+        assert result["success"] is True
+        body = registry._client.post.call_args[1]["json"]
+        assert body == {"entity_id": "fan.vital_100s"}
+
+    async def test_invalid_entity_returns_error(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        result = await registry.execute_control({
+            "entity_id": "light.nonexistent",
+            "action": "turn_on",
+        })
+        assert "error" in result
+
+    async def test_http_error_returns_error(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        registry._client = AsyncMock()
+        registry._client.post = AsyncMock(return_value=MagicMock(status_code=500))
+
+        result = await registry.execute_control({
+            "entity_id": "light.wiz_1",
+            "action": "turn_on",
+        })
+        assert "error" in result
+
+
+class TestHassRegistryExecuteQuery:
+    async def test_get_state_success(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        registry._client = AsyncMock()
+        registry._client.get = AsyncMock(return_value=MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"state": "on", "attributes": {"brightness": 255}}),
+        ))
+
+        result = await registry.execute_query({
+            "query_type": "get_state",
+            "entity_id": "light.wiz_1",
+        })
+        assert result["state"] == "on"
+
+    async def test_get_state_missing_entity_id_returns_error(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        result = await registry.execute_query({
+            "query_type": "get_state",
+        })
+        assert "error" in result
+
+    async def test_list_entities_returns_all(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ RGBW"}},
+            {"entity_id": "fan.vital_100s", "attributes": {"friendly_name": "Vital 100S"}},
+        ]
+        result = await registry.execute_query({"query_type": "list_entities"})
+        assert len(result["entities"]) == 2
+
+    async def test_get_state_invalid_entity_returns_error(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        result = await registry.execute_query({
+            "query_type": "get_state",
+            "entity_id": "light.nonexistent",
+        })
+        assert "error" in result
+
+
+class TestHassRegistryExecuteDispatch:
+    """Registry.execute() dispatches to execute_control or execute_query."""
+
+    async def test_dispatch_hass_control(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        registry._client = AsyncMock()
+        registry._client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        result = await registry.execute("hass_control", {
+            "entity_id": "light.wiz_1",
+            "action": "turn_on",
+        })
+        assert result["success"] is True
+
+    async def test_dispatch_hass_query(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        result = await registry.execute("hass_query", {"query_type": "list_entities"})
+        assert "entities" in result
+
+    async def test_dispatch_unknown_returns_error(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        result = await registry.execute("unknown", {})
+        assert "error" in result
