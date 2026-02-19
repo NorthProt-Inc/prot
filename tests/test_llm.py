@@ -122,56 +122,55 @@ class TestLLMClient:
         assert "error" in result
         assert "unknown_tool" in result["error"].lower()
 
-    async def test_execute_hass_invalid_entity_id_returns_error(self):
-        client = LLMClient(api_key="test")
-        result = await client.execute_tool(
-            "home_assistant", {"action": "get_state", "entity_id": "../../bad"}
+    async def test_stream_passes_empty_tools_as_list(self):
+        """Empty tools list should be passed as-is, not converted to None."""
+        mock_stream = AsyncMock()
+        mock_stream.__aenter__ = AsyncMock(return_value=mock_stream)
+        mock_stream.__aexit__ = AsyncMock(return_value=False)
+        mock_stream.__aiter__ = lambda self: self
+        mock_stream.__anext__ = AsyncMock(side_effect=StopAsyncIteration)
+        mock_stream.get_final_message = AsyncMock(
+            return_value=MagicMock(content=[])
         )
-        assert "error" in result
-        assert "Invalid entity_id" in result["error"]
 
-    async def test_execute_hass_missing_entity_id_returns_error(self):
-        client = LLMClient(api_key="test")
-        result = await client.execute_tool(
-            "home_assistant", {"action": "get_state"}
+        with patch("prot.llm.AsyncAnthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.stream.return_value = mock_stream
+
+            client = LLMClient(api_key="test")
+            async for _ in client.stream_response(
+                system_blocks=[], tools=[], messages=[],
+            ):
+                pass
+
+            call_kwargs = mock_client.messages.stream.call_args.kwargs
+            assert call_kwargs["tools"] == []
+
+    async def test_stream_passes_none_tools_as_none(self):
+        """None tools should be passed as None."""
+        mock_stream = AsyncMock()
+        mock_stream.__aenter__ = AsyncMock(return_value=mock_stream)
+        mock_stream.__aexit__ = AsyncMock(return_value=False)
+        mock_stream.__aiter__ = lambda self: self
+        mock_stream.__anext__ = AsyncMock(side_effect=StopAsyncIteration)
+        mock_stream.get_final_message = AsyncMock(
+            return_value=MagicMock(content=[])
         )
-        assert "error" in result
 
-    async def test_execute_hass_get_state_success(self):
-        client = LLMClient(api_key="test")
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"state": "on"}
+        with patch("prot.llm.AsyncAnthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.messages.stream.return_value = mock_stream
 
-        client._hass_client = AsyncMock()
-        client._hass_client.get = AsyncMock(return_value=mock_response)
+            client = LLMClient(api_key="test")
+            async for _ in client.stream_response(
+                system_blocks=[], tools=None, messages=[],
+            ):
+                pass
 
-        result = await client.execute_tool(
-            "home_assistant",
-            {"action": "get_state", "entity_id": "light.living_room"},
-        )
-        assert result == {"state": "on"}
-
-    async def test_execute_hass_http_error_returns_error(self):
-        client = LLMClient(api_key="test")
-        mock_response = MagicMock()
-        mock_response.status_code = 401
-
-        client._hass_client = AsyncMock()
-        client._hass_client.get = AsyncMock(return_value=mock_response)
-
-        result = await client.execute_tool(
-            "home_assistant",
-            {"action": "get_state", "entity_id": "light.living_room"},
-        )
-        assert "error" in result
-        assert "401" in result["error"]
-
-    async def test_close_closes_hass_client(self):
-        client = LLMClient(api_key="test")
-        client._hass_client = AsyncMock()
-        await client.close()
-        client._hass_client.aclose.assert_awaited_once()
+            call_kwargs = mock_client.messages.stream.call_args.kwargs
+            assert call_kwargs["tools"] is None
 
 
 class TestToolDetection:
@@ -191,3 +190,28 @@ class TestToolDetection:
         client = LLMClient.__new__(LLMClient)
         client._last_response_content = None
         assert client.get_tool_use_blocks() == []
+
+
+class TestStreamResponseResetContent:
+    """stream_response resets _last_response_content before streaming."""
+
+    async def test_last_response_content_reset_before_stream(self):
+        """_last_response_content is None if stream fails before completion."""
+        client = LLMClient.__new__(LLMClient)
+        client._cancelled = False
+        client._active_stream = None
+        # Simulate stale data from previous iteration
+        client._last_response_content = [MagicMock(type="tool_use")]
+
+        # Mock the Anthropic client to raise before streaming
+        client._client = MagicMock()
+        client._client.messages.stream = MagicMock(
+            side_effect=RuntimeError("connection failed")
+        )
+
+        with pytest.raises(RuntimeError):
+            async for _ in client.stream_response([], None, []):
+                pass
+
+        # Should be reset to None, not stale tool_use blocks
+        assert client._last_response_content is None
