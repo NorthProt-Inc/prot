@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import MagicMock
 from prot.context import ContextManager
 
 
@@ -42,11 +43,50 @@ class TestContextManager:
         assert "cache_control" in blocks[1]
         assert "cache_control" not in blocks[2]
 
-    def test_build_tools_returns_list(self):
+    def test_build_tools_without_hass_returns_web_search_only(self):
         cm = ContextManager(persona_text="test", rag_context="")
         tools = cm.build_tools()
         assert isinstance(tools, list)
-        assert len(tools) >= 1  # at least web_search
+        assert len(tools) == 1
+        assert tools[0]["name"] == "web_search"
+
+    def test_build_tools_with_hass_registry(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        mock_registry = MagicMock()
+        mock_registry.build_tool_schemas.return_value = [
+            {"name": "hass_control", "input_schema": {}},
+            {"name": "hass_query", "input_schema": {}, "cache_control": {"type": "ephemeral"}},
+        ]
+        tools = cm.build_tools(hass_registry=mock_registry)
+        assert len(tools) == 3
+        names = [t["name"] for t in tools]
+        assert names == ["web_search", "hass_control", "hass_query"]
+
+    def test_build_tools_last_tool_has_cache_control(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        tools = cm.build_tools()
+        assert "cache_control" in tools[-1]
+
+    def test_build_tools_with_hass_last_tool_has_cache_control(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        mock_registry = MagicMock()
+        mock_registry.build_tool_schemas.return_value = [
+            {"name": "hass_control", "input_schema": {}},
+            {"name": "hass_query", "input_schema": {}, "cache_control": {"type": "ephemeral"}},
+        ]
+        tools = cm.build_tools(hass_registry=mock_registry)
+        assert "cache_control" in tools[-1]
+        assert tools[-1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_build_tools_adds_cache_control_when_registry_omits_it(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        mock_registry = MagicMock()
+        mock_registry.build_tool_schemas.return_value = [
+            {"name": "hass_control", "input_schema": {}},
+            {"name": "hass_query", "input_schema": {}},  # no cache_control
+        ]
+        tools = cm.build_tools(hass_registry=mock_registry)
+        assert tools[-1]["cache_control"] == {"type": "ephemeral"}
 
     def test_add_message_and_get_history(self):
         cm = ContextManager(persona_text="test", rag_context="")

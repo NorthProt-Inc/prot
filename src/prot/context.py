@@ -51,7 +51,7 @@ class ContextManager:
         }
         return [block1_persona, block2_rag, block3_dynamic]
 
-    def build_tools(self) -> list[dict]:
+    def build_tools(self, hass_registry=None) -> list[dict]:
         """Build tool definitions with cache on last tool."""
         web_search: dict = {
             "type": "web_search_20250305",
@@ -64,27 +64,16 @@ class ContextManager:
                 "timezone": "America/Vancouver",
             },
         }
-        hass_tool: dict = {
-            "name": "home_assistant",
-            "description": (
-                "Query or control Home Assistant. "
-                "Actions: get_state, call_service."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["get_state", "call_service"],
-                    },
-                    "entity_id": {"type": "string"},
-                    "service_data": {"type": "object"},
-                },
-                "required": ["action", "entity_id"],
-            },
-            "cache_control": {"type": "ephemeral"},
-        }
-        return [web_search, hass_tool]
+        tools = [web_search]
+
+        if hass_registry is not None:
+            tools.extend(hass_registry.build_tool_schemas())
+
+        # Ensure last tool has cache_control
+        if "cache_control" not in tools[-1]:
+            tools[-1]["cache_control"] = {"type": "ephemeral"}
+
+        return tools
 
     def add_message(self, role: str, content: str | list) -> None:
         """Append a message. Content can be str or list of content blocks."""
