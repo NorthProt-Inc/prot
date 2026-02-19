@@ -50,3 +50,13 @@ class AsyncVoyageEmbedder:
                 input_type="query",
             )
         return result.embeddings[0]
+
+    async def embed_chunks_contextual(self, chunks: list[str]) -> list[list[float]]:
+        """Embed chunks using voyage-context-3. All chunks treated as one document's segments."""
+        async with self._semaphore:
+            result = await self._client.contextualized_embed(
+                inputs=[chunks],  # single document, multiple chunks
+                model=settings.voyage_context_model,
+                input_type="document",
+            )
+        return result.results[0].embeddings
