@@ -16,17 +16,22 @@ from prot.processing import content_to_text
 logger = get_logger(__name__)
 
 
-EXTRACTION_PROMPT = """Extract entities and relationships from this conversation.
+EXTRACTION_PROMPT = """Extract entities and relationships from this conversation segment.
 The conversation may be in Korean or English. Keep entity names in their original language.
 
+{known_entities_block}
+
 Return JSON with this exact structure:
-{
-  "entities": [{"name": "...", "type": "person|place|concept|event|preference", "description": "..."}],
-  "relationships": [{"source": "...", "target": "...", "type": "...", "description": "..."}]
-}
+{{
+  "entities": [{{"name": "...", "type": "person|place|concept|event|preference", "description": "..."}}],
+  "relationships": [{{"source": "...", "target": "...", "type": "...", "description": "..."}}]
+}}
 
 Extract names, places, preferences, plans, opinions, and technical topics.
+When you encounter pronouns or references, resolve them to known entities where possible.
 Skip generic greetings and filler. If nothing meaningful, return empty arrays."""
+
+_KNOWN_ENTITIES_TEMPLATE = "Previously known entities: {names}. Link new information to these when relevant."
 
 
 class MemoryExtractor:
@@ -46,6 +51,8 @@ class MemoryExtractor:
         self._community_detector = community_detector
         self._reranker = reranker
         self._extraction_count: int = 0
+        self._last_extracted_index: int = 0
+        self._known_entities: set[str] = set()
 
     async def close(self) -> None:
         """Close the underlying Anthropic client."""
@@ -56,16 +63,23 @@ class MemoryExtractor:
             await self._reranker.close()
 
     @logged(slow_ms=3000)
-    async def extract_from_conversation(self, messages: list[dict]) -> dict:
-        """Use Haiku 4.5 to extract entities and relationships from conversation."""
+    async def extract_from_conversation(
+        self, messages: list[dict], known_entity_names: list[str] | None = None,
+    ) -> dict:
+        """Extract entities and relationships from conversation segment."""
         logger.info("Extracting", messages=len(messages))
         conversation_text = "\n".join(
             f"{m['role']}: {content_to_text(m['content'])}" for m in messages
         )
+        if known_entity_names:
+            block = _KNOWN_ENTITIES_TEMPLATE.format(names=", ".join(known_entity_names))
+        else:
+            block = ""
+        system = EXTRACTION_PROMPT.format(known_entities_block=block)
         response = await self._llm.messages.create(
             model=settings.memory_extraction_model,
             max_tokens=2000,
-            system=EXTRACTION_PROMPT,
+            system=system,
             messages=[{"role": "user", "content": conversation_text}],
         )
         try:
@@ -107,6 +121,7 @@ class MemoryExtractor:
                         conn=conn,
                     )
                     entity_ids[entity["name"]] = eid
+                    self._known_entities.add(entity["name"])
 
                 for rel in relationships:
                     src_id = entity_ids.get(rel["source"])
@@ -135,6 +150,25 @@ class MemoryExtractor:
             logger.info("Community rebuild complete", communities=count)
         except Exception:
             logger.warning("Community rebuild failed", exc_info=True)
+
+    async def extract_incremental(self, all_messages: list[dict]) -> dict:
+        """Extract from only the most recent conversation window."""
+        window_size = settings.memory_extraction_window_turns * 2  # user+assistant pairs
+        start = max(self._last_extracted_index, len(all_messages) - window_size)
+        segment = all_messages[start:]
+        if not segment:
+            return {"entities": [], "relationships": []}
+        known_names = sorted(self._known_entities)
+        extraction = await self.extract_from_conversation(segment, known_entity_names=known_names)
+        self._last_extracted_index = len(all_messages)
+        return extraction
+
+    async def seed_known_entities(self) -> None:
+        """Seed known entities from DB on startup."""
+        if not self._store:
+            return
+        names = await self._store.get_entity_names()
+        self._known_entities.update(names)
 
     async def pre_load_context(self, query: str) -> str:
         """Search GraphRAG (entities + neighbors + communities) and assemble Block 2 context."""

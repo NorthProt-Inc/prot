@@ -52,6 +52,7 @@ class Settings(BaseSettings):
 
     # Memory
     memory_extraction_model: str = "claude-sonnet-4-6"
+    memory_extraction_window_turns: int = 3
     rag_context_target_tokens: int = 3000
     rag_top_k: int = 10
 

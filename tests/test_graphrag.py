@@ -342,6 +342,55 @@ class TestGetEntityCount:
         assert count == 42
 
 
+class TestGetEntityNames:
+    """get_entity_names should return entity names from DB."""
+
+    async def test_get_entity_names(self):
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+        conn.fetch = AsyncMock(return_value=[
+            mock_record(name="Bob"),
+            mock_record(name="Alice"),
+        ])
+
+        names = await store.get_entity_names()
+        assert names == ["Bob", "Alice"]
+        call = conn.fetch.call_args
+        assert "entities" in call.args[0]
+        assert "mention_count DESC" in call.args[0]
+
+    async def test_get_entity_names_empty(self):
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+        conn.fetch = AsyncMock(return_value=[])
+
+        names = await store.get_entity_names()
+        assert names == []
+
+
+class TestUpsertEntityDescriptionAccumulation:
+    """upsert_entity SQL should accumulate descriptions instead of overwriting."""
+
+    async def test_upsert_entity_accumulates_description(self):
+        pool, conn = make_mock_pool()
+        store = GraphRAGStore(pool)
+
+        new_id = uuid4()
+        conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
+
+        await store.upsert_entity(
+            name="TestEntity",
+            entity_type="person",
+            description="A test entity",
+        )
+
+        call = conn.fetchrow.call_args
+        sql = call.args[0]
+        assert "LEFT(" in sql
+        assert "POSITION(" in sql
+        assert "500" in sql
+
+
 class TestGetEntityNeighbors:
     """get_entity_neighbors should return neighboring entities."""
 
