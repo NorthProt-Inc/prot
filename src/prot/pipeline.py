@@ -186,7 +186,7 @@ class Pipeline:
         await self._stt.connect()
         if not self._stt.is_connected:
             logger.warning("STT connect failed, falling back to IDLE")
-            self._sm._state = State.IDLE
+            self._sm.force_recovery(State.IDLE)
             self._pending_audio.clear()
             reset_turn()
             return
@@ -378,7 +378,7 @@ class Pipeline:
             logger.error("Tool loop fell through without resolution")
             reset_turn()
             if self._sm.state in (State.PROCESSING, State.SPEAKING):
-                self._sm._state = State.ACTIVE
+                self._sm.force_recovery(State.ACTIVE)
                 self._start_active_timeout()
 
         except Exception:
@@ -390,7 +390,7 @@ class Pipeline:
             # [FIX 6] State-aware recovery — only force ACTIVE from stuck states
             reset_turn()
             if self._sm.state in (State.PROCESSING, State.SPEAKING):
-                self._sm._state = State.ACTIVE
+                self._sm.force_recovery(State.ACTIVE)
                 self._start_active_timeout()
 
     async def _handle_barge_in(self) -> None:
@@ -410,7 +410,7 @@ class Pipeline:
         await self._stt.connect()
         if not self._stt.is_connected:
             logger.warning("STT reconnect failed after barge-in, falling back to IDLE")
-            self._sm._state = State.IDLE
+            self._sm.force_recovery(State.IDLE)
             self._pending_audio.clear()
             reset_turn()
             return

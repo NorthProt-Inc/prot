@@ -30,7 +30,7 @@ class TestStateMachine:
         sm.on_speech_detected()
         sm.on_utterance_complete()
         sm.on_tts_started()
-        sm.on_tts_complete()
+        sm.try_on_tts_complete()
         assert sm.state == State.ACTIVE
 
     def test_active_timeout_goes_to_idle(self):
@@ -38,7 +38,7 @@ class TestStateMachine:
         sm.on_speech_detected()
         sm.on_utterance_complete()
         sm.on_tts_started()
-        sm.on_tts_complete()
+        sm.try_on_tts_complete()
         sm.on_active_timeout()
         assert sm.state == State.IDLE
 
@@ -64,7 +64,7 @@ class TestStateMachine:
         sm.on_speech_detected()  # IDLE -> LISTENING
         sm.on_utterance_complete()  # -> PROCESSING
         sm.on_tts_started()  # -> SPEAKING
-        sm.on_tts_complete()  # -> ACTIVE
+        sm.try_on_tts_complete()  # -> ACTIVE
         sm.on_speech_detected()  # ACTIVE -> LISTENING
         assert sm.state == State.LISTENING
 
@@ -116,6 +116,6 @@ class TestStateMachine:
         sm.on_speech_detected()
         sm.on_utterance_complete()
         sm.on_tts_started()
-        sm.on_tts_complete()          # -> ACTIVE
+        sm.try_on_tts_complete()          # -> ACTIVE
         with pytest.raises(ValueError):
             sm.on_tool_iteration()
