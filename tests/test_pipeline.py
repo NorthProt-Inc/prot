@@ -306,7 +306,8 @@ class TestShutdown:
         mock_pool = AsyncMock()
         p._pool = mock_pool
 
-        await p.shutdown()
+        with patch("prot.db.export_tables", new_callable=AsyncMock):
+            await p.shutdown()
         mock_pool.close.assert_awaited_once()
 
     async def test_closes_tts_client(self):

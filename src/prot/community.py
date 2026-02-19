@@ -139,7 +139,7 @@ class CommunityDetector:
             return []
 
     async def _summarize_community(self, entities: list[dict]) -> str:
-        """Use Haiku 4.5 to generate a concise community summary."""
+        """Generate a concise community summary via LLM."""
         entity_list = "\n".join(
             f"- {e['name']} ({e['entity_type']}): {e['description']}"
             for e in entities

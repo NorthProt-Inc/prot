@@ -46,6 +46,7 @@ cp .env.example .env
 | `CHUNK_SIZE` | No | `512` | 오디오 청크 크기 |
 | `VAD_THRESHOLD` | No | `0.5` | VAD 음성 감지 임계값 (IDLE/ACTIVE) |
 | `VAD_THRESHOLD_SPEAKING` | No | `0.8` | VAD 임계값 (SPEAKING 상태, barge-in) |
+| `VAD_PREBUFFER_CHUNKS` | No | `8` | VAD 프리버퍼 청크 수 |
 
 #### STT / LLM / TTS
 
@@ -56,8 +57,8 @@ cp .env.example .env
 | `CLAUDE_MAX_TOKENS` | No | `4096` | Claude 최대 출력 토큰 |
 | `CLAUDE_EFFORT` | No | `high` | Claude thinking effort (low/medium/high) |
 | `CONTEXT_MAX_TURNS` | No | `10` | 슬라이딩 윈도우 크기 (최근 N턴만 LLM에 전달) |
-| `ELEVENLABS_VOICE_ID` | No | `Fahco4VZzobUeiPqni1S` | ElevenLabs voice ID |
-| `ELEVENLABS_MODEL` | No | `eleven_multilingual_v2` | ElevenLabs TTS 모델 |
+| `ELEVENLABS_VOICE_ID` | No | `s3lKyrFAzTUpzy3ZLwbM` | ElevenLabs voice ID |
+| `ELEVENLABS_MODEL` | No | `eleven_v3` | ElevenLabs TTS 모델 |
 | `ELEVENLABS_OUTPUT_FORMAT` | No | `pcm_24000` | TTS 출력 오디오 포맷 |
 
 #### Home Assistant
@@ -76,10 +77,14 @@ cp .env.example .env
 | `DB_POOL_MAX` | No | `10` | DB 커넥션 풀 최대 크기 |
 | `DB_EXPORT_DIR` | No | `data/db` | DB 종료 시 CSV 내보내기 디렉토리 |
 | `VOYAGE_API_KEY` | No | — | Voyage AI 임베딩 API 키 |
-| `VOYAGE_MODEL` | No | `voyage-4-lite` | Voyage 임베딩 모델 |
+| `VOYAGE_MODEL` | No | `voyage-4` | Voyage 임베딩 모델 |
 | `VOYAGE_DIMENSION` | No | `1024` | 임베딩 벡터 차원 |
-| `MEMORY_EXTRACTION_MODEL` | No | `claude-haiku-4-5-20251001` | Memory 추출용 모델 |
-| `RAG_CONTEXT_TARGET_TOKENS` | No | `3000` | RAG 컨텍스트 목표 토큰 수 |
+| `VOYAGE_CONTEXT_MODEL` | No | `voyage-context-3` | Contextual 임베딩 모델 |
+| `RERANK_MODEL` | No | `rerank-2.5` | Voyage 리랭커 모델 |
+| `RERANK_TOP_K` | No | `5` | 리랭커 상위 결과 수 |
+| `MEMORY_EXTRACTION_MODEL` | No | `claude-sonnet-4-6` | Memory 추출용 모델 |
+| `MEMORY_EXTRACTION_WINDOW_TURNS` | No | `3` | 추출 주기당 턴 수 |
+| `RAG_CONTEXT_TARGET_TOKENS` | No | `4096` | RAG 컨텍스트 목표 토큰 수 |
 | `RAG_TOP_K` | No | `10` | RAG 검색 상위 결과 수 |
 | `COMMUNITY_REBUILD_INTERVAL` | No | `5` | Community detection 재구축 간격 (추출 횟수) |
 | `COMMUNITY_MIN_ENTITIES` | No | `5` | Community detection 최소 엔티티 수 |

@@ -28,13 +28,14 @@ src/prot/
   vad.py           # Silero VAD speech detection
   stt.py           # ElevenLabs Scribe v2 (WebSocket realtime STT)
   llm.py           # Claude API (Sonnet 4.6) — streaming responses + tool-use loop (max 3 rounds)
+  hass.py          # Home Assistant API client (get_state, call_service)
   tts.py           # ElevenLabs TTS streaming
   playback.py      # paplay (PulseAudio) audio output with producer-consumer queue
   processing.py    # Orchestrates LLM→TTS→playback per utterance
   context.py       # 3-block system prompt builder + sliding window context (last N turns)
-  persona.py       # Axel persona definition (loaded from docs/axel.json)
+  persona.py       # Axel persona definition (loaded from data/axel.json)
   memory.py        # Background memory extraction + RAG context retrieval
-  graphrag.py      # Entity/relationship extraction via Haiku 4.5
+  graphrag.py      # pgvector-backed entity/relationship/community storage
   community.py     # Louvain community detection + LLM summarization
   embeddings.py    # Voyage AI embeddings (voyage-4, voyage-context-3 contextual)
   reranker.py      # Voyage AI reranker (rerank-2.5)
@@ -42,12 +43,13 @@ src/prot/
   conversation_log.py  # Daily JSONL conversation logger (data/conversations/)
   log.py           # Legacy logging compat
   schema.sql       # PostgreSQL schema (auto-applied on startup)
-  logging/         # Structured logging subsystem (6 modules)
+  logging/         # Structured logging subsystem
     setup.py           # Logger configuration
     structured_logger.py  # StructuredLogger class
     formatters.py      # Log formatters
     handlers.py        # Log handlers
     constants.py       # Log field constants
+    tracing.py         # Function tracing decorator with call-depth visualization
 ```
 
 ## Code Patterns
@@ -62,7 +64,7 @@ src/prot/
 - **Sliding window**: `get_recent_messages(max_turns)` returns last N turns for LLM calls.
   Full history preserved via `get_messages()` for session logging and memory extraction.
   Window boundary skips orphaned tool_result messages to maintain valid conversation flow.
-- **Memory extraction**: Runs in background after each exchange. Uses Haiku 4.5 for entity/relationship extraction.
+- **Memory extraction**: Runs in background after each exchange. Uses configurable model (default Sonnet 4.6) for entity/relationship extraction.
   Contextual embeddings (voyage-context-3) for document-aware entity storage. Reranker (rerank-2.5) refines RAG results.
   Community detection triggers every 5 extractions via CommunityDetector (Louvain clustering).
 - **Reranker**: RAG retrieval uses Voyage rerank-2.5 to re-score candidate results before context injection.
@@ -81,4 +83,4 @@ src/prot/
 
 - Conversation with Claude: Korean
 - Code, comments, commit messages, docs: English
-- Architectural decisions recorded in `docs/plans/`
+- Architectural decisions recorded in docs/ (when applicable)

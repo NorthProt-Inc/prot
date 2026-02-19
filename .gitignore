@@ -30,6 +30,10 @@ logs/
 
 # Data (conversations + DB exports)
 data/
+!data/axel.json
+
+# Working notes
+docs/mem.md
 
 # Reference / legacy projects
 .reference/
