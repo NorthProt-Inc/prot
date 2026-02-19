@@ -67,6 +67,8 @@ def _make_pipeline():
     p._memory = None
     p._graphrag = None
     p._embedder = None
+    p._reranker = None
+    p._hass_registry = None
     p._pool = None
 
     # Internal state
@@ -681,9 +683,9 @@ class TestToolUseHandling:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "home_assistant"
+        tool_block.name = "hass_control"
         tool_block.id = "tool_123"
-        tool_block.input = {"action": "get_state", "entity_id": "light.living"}
+        tool_block.input = {"entity_id": "light.living", "action": "turn_on"}
 
         tc = 0
 
@@ -693,7 +695,11 @@ class TestToolUseHandling:
             return [tool_block] if tc == 1 else []
 
         p._llm.get_tool_use_blocks = fake_get_tool
-        p._llm.execute_tool = AsyncMock(return_value={"state": "on"})
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(return_value={"success": True, "message": "done"})
+        p._hass_registry = mock_registry
+
         p._llm.last_response_content = [MagicMock(type="text")]
 
         async def fake_tts(text):
@@ -707,7 +713,7 @@ class TestToolUseHandling:
             await p._process_response()
 
         assert call_count == 2
-        p._llm.execute_tool.assert_awaited_once()
+        mock_registry.execute.assert_awaited_once()
         assert p._sm.state == State.ACTIVE
 
     async def test_tool_use_error_is_reported(self):
@@ -730,9 +736,9 @@ class TestToolUseHandling:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "home_assistant"
+        tool_block.name = "hass_control"
         tool_block.id = "tool_456"
-        tool_block.input = {"action": "get_state", "entity_id": "light.bad"}
+        tool_block.input = {"entity_id": "light.bad", "action": "turn_on"}
 
         tc = 0
 
@@ -742,7 +748,11 @@ class TestToolUseHandling:
             return [tool_block] if tc == 1 else []
 
         p._llm.get_tool_use_blocks = fake_get_tool
-        p._llm.execute_tool = AsyncMock(side_effect=RuntimeError("HASS down"))
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(side_effect=RuntimeError("HASS down"))
+        p._hass_registry = mock_registry
+
         p._llm.last_response_content = [MagicMock(type="text")]
 
         async def fake_tts(text):
@@ -793,8 +803,8 @@ class TestStreamResponseResetContent:
 class TestToolLoopExhaustion:
     """_process_response() — tool loop hits max iterations without deadlock."""
 
-    async def test_last_iteration_strips_tools(self):
-        """On the final iteration, tools=None forces text-only response."""
+    async def test_all_iterations_receive_tools(self):
+        """All iterations receive the same tools list (no stripping)."""
         p = _make_pipeline()
         p._sm.on_speech_detected()
         p._sm.on_utterance_complete()
@@ -809,20 +819,24 @@ class TestToolLoopExhaustion:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "home_assistant"
+        tool_block.name = "hass_control"
         tool_block.id = "tool_exhaust"
-        tool_block.input = {"action": "get_state", "entity_id": "light.living"}
+        tool_block.input = {"entity_id": "light.living", "action": "turn_on"}
 
         call_count = 0
 
         def fake_get_tool():
             nonlocal call_count
             call_count += 1
-            # Return tool blocks for first 2 calls, empty on 3rd (tools stripped)
+            # Return tool blocks for first 2 calls, empty on 3rd
             return [tool_block] if call_count < 3 else []
 
         p._llm.get_tool_use_blocks = fake_get_tool
-        p._llm.execute_tool = AsyncMock(return_value={"state": "on"})
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(return_value={"success": True, "message": "done"})
+        p._hass_registry = mock_registry
+
         p._llm.last_response_content = [MagicMock(type="text")]
 
         async def fake_tts(text):
@@ -838,7 +852,7 @@ class TestToolLoopExhaustion:
         assert len(captured_tools) == 3
         assert captured_tools[0] is not None  # iteration 0: tools passed
         assert captured_tools[1] is not None  # iteration 1: tools passed
-        assert captured_tools[2] is None      # iteration 2: tools stripped
+        assert captured_tools[2] is not None  # iteration 2: tools still passed
         assert p._sm.state == State.ACTIVE    # not stuck in PROCESSING
 
 
@@ -858,9 +872,9 @@ class TestInterruptionDuringToolExec:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "home_assistant"
+        tool_block.name = "hass_control"
         tool_block.id = "tool_int"
-        tool_block.input = {"action": "get_state", "entity_id": "light.living"}
+        tool_block.input = {"entity_id": "light.living", "action": "turn_on"}
 
         p._llm.get_tool_use_blocks = MagicMock(return_value=[tool_block])
 
@@ -868,9 +882,12 @@ class TestInterruptionDuringToolExec:
             # Simulate barge-in during tool execution
             p._sm.on_speech_detected()    # SPEAKING -> INTERRUPTED
             p._sm.on_interrupt_handled()  # INTERRUPTED -> LISTENING
-            return {"state": "on"}
+            return {"success": True, "message": "done"}
 
-        p._llm.execute_tool = fake_execute
+        mock_registry = AsyncMock()
+        mock_registry.execute = fake_execute
+        p._hass_registry = mock_registry
+
         p._llm.last_response_content = [MagicMock(type="text")]
 
         async def fake_tts(text):
@@ -1025,3 +1042,79 @@ class TestPreBuffer:
         await p._handle_vad_speech()
         assert len(p._pending_audio) == 0
         assert p._stt_connected is False
+
+
+class TestPipelineHassRouting:
+    async def test_hass_tool_routed_to_registry(self):
+        """HASS tool calls are routed through _hass_registry, not _llm."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        mock_registry = AsyncMock()
+        mock_registry.execute = AsyncMock(return_value={"success": True, "message": "done"})
+        p._hass_registry = mock_registry
+
+        call_count = 0
+
+        async def fake_stream(*a, **kw):
+            nonlocal call_count
+            call_count += 1
+            yield "Checking." if call_count == 1 else "Done."
+
+        p._llm.stream_response = fake_stream
+
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.name = "hass_control"
+        tool_block.id = "tool_hass"
+        tool_block.input = {"entity_id": "light.wiz_1", "action": "turn_on"}
+
+        tc = 0
+
+        def fake_get_tool():
+            nonlocal tc
+            tc += 1
+            return [tool_block] if tc == 1 else []
+
+        p._llm.get_tool_use_blocks = fake_get_tool
+        p._llm.last_response_content = [MagicMock(type="text")]
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            await p._process_response()
+
+        mock_registry.execute.assert_awaited_once_with("hass_control", tool_block.input)
+
+    async def test_build_tools_called_with_registry(self):
+        """build_tools receives hass_registry parameter."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        mock_registry = MagicMock()
+        p._hass_registry = mock_registry
+
+        async def fake_stream(*a, **kw):
+            yield "Hello."
+
+        p._llm.stream_response = fake_stream
+        p._llm.last_response_content = [MagicMock(type="text")]
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            await p._process_response()
+
+        p._ctx.build_tools.assert_called_with(hass_registry=mock_registry)

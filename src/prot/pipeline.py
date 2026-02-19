@@ -49,6 +49,7 @@ class Pipeline:
         self._graphrag = None
         self._embedder = None
         self._reranker = None
+        self._hass_registry = None
         self._pool = None
 
         self._conversation_id = uuid4()
@@ -70,8 +71,18 @@ class Pipeline:
         return self._sm
 
     async def startup(self) -> None:
-        """Initialize optional async resources (DB, GraphRAG, embedder, memory)."""
+        """Initialize optional async resources (HASS, DB, GraphRAG, embedder, memory)."""
         self._loop = asyncio.get_running_loop()
+
+        try:
+            from prot.hass import HassRegistry
+            if settings.hass_token:
+                self._hass_registry = HassRegistry(settings.hass_url, settings.hass_token)
+                await self._hass_registry.discover()
+                logger.info("HASS registry ready", entities=len(self._hass_registry._entities))
+        except Exception:
+            logger.warning("HASS registry not available")
+
         try:
             from prot.db import init_pool
             self._pool = await init_pool()
@@ -220,16 +231,11 @@ class Pipeline:
         tools are executed and results fed back for up to _MAX_TOOL_ITERATIONS.
         """
         system_blocks = self._ctx.build_system_blocks()
-        tools = self._ctx.build_tools()
+        tools = self._ctx.build_tools(hass_registry=self._hass_registry)
 
         try:
             for iteration in range(self._MAX_TOOL_ITERATIONS):
                 messages = self._ctx.get_recent_messages(settings.context_max_turns)
-
-                # [FIX 1] Strip tools on final iteration to force text-only response
-                iter_tools = tools if iteration < self._MAX_TOOL_ITERATIONS - 1 else None
-                if iter_tools is None and tools:
-                    logger.warning("Tool loop limit, forcing text-only", iteration=iteration)
 
                 _response_parts: list[str] = []
                 buffer = ""
@@ -240,7 +246,7 @@ class Pipeline:
                     nonlocal buffer, _last_pressure_log
                     try:
                         async for chunk in self._llm.stream_response(
-                            system_blocks, iter_tools, messages  # [FIX 1] iter_tools
+                            system_blocks, tools, messages
                         ):
                             if self._sm.state == State.INTERRUPTED:
                                 break
@@ -339,7 +345,10 @@ class Pipeline:
                 tool_results = []
                 for block in tool_blocks:
                     try:
-                        result = await self._llm.execute_tool(block.name, block.input)
+                        if block.name in ("hass_control", "hass_query") and self._hass_registry:
+                            result = await self._hass_registry.execute(block.name, block.input)
+                        else:
+                            result = await self._llm.execute_tool(block.name, block.input)
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
@@ -514,6 +523,8 @@ class Pipeline:
             closeables.append(self._memory.close)
         if self._embedder is not None:
             closeables.append(self._embedder.close)
+        if self._hass_registry is not None:
+            closeables.append(self._hass_registry.close)
         for close_fn in closeables:
             try:
                 await close_fn()
