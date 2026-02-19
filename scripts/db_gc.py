@@ -527,13 +527,16 @@ async def phase_community_rebuild(conn: asyncpg.Connection, *, apply: bool) -> N
         return
 
     # Import here to avoid requiring API keys for dry-run/check
+    from pgvector.asyncpg import register_vector  # noqa: PLC0415
     from prot.community import CommunityDetector  # noqa: PLC0415
     from prot.embeddings import AsyncVoyageEmbedder  # noqa: PLC0415
     from prot.graphrag import GraphRAGStore  # noqa: PLC0415
 
-    # Create a temporary pool for GraphRAGStore
+    # Create a temporary pool for GraphRAGStore (init=register_vector for pgvector codec)
     from prot.config import settings  # noqa: PLC0415
-    pool = await asyncpg.create_pool(settings.database_url, min_size=1, max_size=3)
+    pool = await asyncpg.create_pool(
+        settings.database_url, min_size=1, max_size=3, init=register_vector,
+    )
     try:
         store = GraphRAGStore(pool)
         embedder = AsyncVoyageEmbedder()
