@@ -511,7 +511,7 @@ class TestMemoryExtractorConcurrency:
 
         call_order = []
 
-        async def mock_get_neighbors(entity_id, max_depth=1):
+        async def mock_get_neighbors(entity_id):
             call_order.append(("start", entity_id))
             await asyncio.sleep(0.01)  # simulate DB latency
             call_order.append(("end", entity_id))

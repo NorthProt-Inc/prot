@@ -419,7 +419,7 @@ class TestGetEntityNeighbors:
         ]
         conn.fetch = AsyncMock(return_value=rows)
 
-        results = await store.get_entity_neighbors(entity_id, max_depth=1)
+        results = await store.get_entity_neighbors(entity_id)
 
         assert len(results) == 2
         assert all(isinstance(r, dict) for r in results)

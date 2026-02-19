@@ -206,7 +206,7 @@ class MemoryExtractor:
             )
 
         neighbor_lists = await asyncio.gather(*(
-            self._store.get_entity_neighbors(entity["id"], max_depth=1)
+            self._store.get_entity_neighbors(entity["id"])
             for entity in entities
         ))
         for entity, neighbors in zip(entities, neighbor_lists):
