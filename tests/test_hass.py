@@ -1,5 +1,7 @@
 import pytest
-from prot.hass import parse_color
+from unittest.mock import AsyncMock, MagicMock
+import httpx
+from prot.hass import parse_color, HassRegistry
 
 
 class TestParseColor:
@@ -71,3 +73,113 @@ class TestParseColor:
     def test_case_insensitive(self):
         assert parse_color("RED") == [255, 0, 0]
         assert parse_color("Blue") == [0, 0, 255]
+
+
+class TestHassRegistryDiscover:
+    async def test_discover_filters_by_domain_allowlist(self):
+        """Only entities from allowed domains (light, fan, switch, etc.) are kept."""
+        mock_states = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ RGBW"}},
+            {"entity_id": "fan.vital_100s", "attributes": {"friendly_name": "Vital 100S"}},
+            {"entity_id": "camera.front", "attributes": {"friendly_name": "Front Camera"}},
+        ]
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._client = AsyncMock()
+        registry._client.get = AsyncMock(return_value=MagicMock(
+            status_code=200, json=MagicMock(return_value=mock_states),
+        ))
+        await registry.discover()
+
+        ids = [e["entity_id"] for e in registry._entities]
+        assert "light.wiz_1" in ids
+        assert "fan.vital_100s" in ids
+        assert "camera.front" not in ids
+
+    async def test_discover_failure_sets_empty(self):
+        """HASS connection failure -> graceful degradation."""
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._client = AsyncMock()
+        registry._client.get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        await registry.discover()
+
+        assert registry._entities == []
+
+    async def test_discover_non_200_sets_empty(self):
+        """Non-200 response -> graceful degradation."""
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._client = AsyncMock()
+        registry._client.get = AsyncMock(return_value=MagicMock(status_code=401))
+        await registry.discover()
+
+        assert registry._entities == []
+
+
+class TestHassRegistryBuildToolSchemas:
+    async def test_build_returns_two_tools_when_entities_exist(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ RGBW"}},
+        ]
+        tools = registry.build_tool_schemas()
+        assert len(tools) == 2
+        names = {t["name"] for t in tools}
+        assert names == {"hass_control", "hass_query"}
+
+    async def test_build_returns_empty_when_no_entities(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = []
+        tools = registry.build_tool_schemas()
+        assert tools == []
+
+    async def test_entity_ids_in_enum(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ RGBW"}},
+            {"entity_id": "fan.vital_100s", "attributes": {"friendly_name": "Vital 100S"}},
+        ]
+        tools = registry.build_tool_schemas()
+        control = next(t for t in tools if t["name"] == "hass_control")
+        entity_enum = control["input_schema"]["properties"]["entity_id"]["enum"]
+        assert "light.wiz_1" in entity_enum
+        assert "fan.vital_100s" in entity_enum
+
+    async def test_last_tool_has_cache_control(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ RGBW"}},
+        ]
+        tools = registry.build_tool_schemas()
+        assert "cache_control" in tools[-1]
+        assert tools[-1]["cache_control"] == {"type": "ephemeral"}
+
+    async def test_hass_control_has_brightness_and_color_fields(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        tools = registry.build_tool_schemas()
+        control = next(t for t in tools if t["name"] == "hass_control")
+        props = control["input_schema"]["properties"]
+        assert "brightness" in props
+        assert "color" in props
+        assert "color_temp_kelvin" in props
+
+    async def test_hass_query_has_query_type_enum(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ"}},
+        ]
+        tools = registry.build_tool_schemas()
+        query = next(t for t in tools if t["name"] == "hass_query")
+        query_type = query["input_schema"]["properties"]["query_type"]
+        assert query_type["enum"] == ["get_state", "list_entities"]
+
+    async def test_description_contains_entity_names(self):
+        registry = HassRegistry("http://hass:8123", "token")
+        registry._entities = [
+            {"entity_id": "light.wiz_1", "attributes": {"friendly_name": "WiZ RGBW"}},
+        ]
+        tools = registry.build_tool_schemas()
+        control = next(t for t in tools if t["name"] == "hass_control")
+        assert "light.wiz_1" in control["description"]
+        assert "WiZ RGBW" in control["description"]
