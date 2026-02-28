@@ -39,10 +39,10 @@ ignore_all_files_in_gitignore: true
 # Same syntax as gitignore, so you can use * and **.
 # Note: global ignored_paths from serena_config.yml are also applied additively.
 ignored_paths:
-  - ".reference/**"
-  - "data/**"
-  - "dist/**"
-  - ".worktrees/**"
+- ".reference/**"
+- "data/**"
+- "dist/**"
+- ".worktrees/**"
 
 # whether the project is in read-only mode
 # If set to true, all editing tools will be disabled and attempts to use them will result in an error
@@ -120,3 +120,7 @@ initial_prompt: |
   State machine: IDLE, LISTENING, PROCESSING, SPEAKING, ACTIVE, INTERRUPTED
   Build: uv sync / Test: uv run pytest / Run: uv run uvicorn prot.app:app --reload
   Check memories for architecture details and known issues.
+
+# override of the corresponding setting in serena_config.yml, see the documentation there.
+# If null or missing, the value from the global config is used.
+symbol_info_budget:
