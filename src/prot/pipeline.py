@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from prot.config import settings
 from prot.context import ContextManager
-from prot.trimmer import TokenBudgetTrimmer
 from prot.conversation_log import ConversationLogger
 from prot.llm import LLMClient
 from prot.persona import load_persona
@@ -74,6 +73,7 @@ class Pipeline:
         """Expose state machine for external access (e.g., health endpoints)."""
         return self._sm
 
+    @logged(slow_ms=5000)
     async def startup(self) -> None:
         """Initialize optional async resources (HASS, DB, GraphRAG, embedder, memory)."""
         self._loop = asyncio.get_running_loop()
@@ -219,6 +219,7 @@ class Pipeline:
             self._current_transcript += text
             logger.info("STT final", text=text[:50])
 
+    @logged(slow_ms=500)
     async def _handle_utterance_end(self) -> None:
         """STT utterance end — transition to PROCESSING and run response."""
         if not self._current_transcript.strip():
@@ -252,17 +253,10 @@ class Pipeline:
 
         system_blocks = self._ctx.build_system_blocks()
         tools = self._ctx.build_tools(hass_agent=self._hass_agent)
-        trimmer = TokenBudgetTrimmer(
-            llm=self._llm,
-            system=system_blocks,
-            tools=tools,
-            budget=settings.context_token_budget,
-        )
 
         try:
             for iteration in range(self._MAX_TOOL_ITERATIONS):
                 messages = self._ctx.get_recent_messages()
-                messages = await trimmer.fit(messages)
 
                 _response_parts: list[str] = []
                 buffer = ""
@@ -402,7 +396,6 @@ class Pipeline:
                         })
 
                 self._ctx.add_message("user", tool_results)
-                trimmer.update_overhead(self._llm.last_usage)
 
                 # [FIX 4] Guard: bail if barge-in happened during tool execution
                 if self._sm.state != State.SPEAKING:
@@ -442,6 +435,7 @@ class Pipeline:
                 self._sm.force_recovery(State.ACTIVE)
                 self._start_active_timeout()
 
+    @logged(slow_ms=200)
     async def _handle_barge_in(self) -> None:
         """User interrupted during TTS — cancel everything, reconnect STT."""
         logger.info("Interrupting", state=self._sm.state.value)
@@ -541,6 +535,7 @@ class Pipeline:
             diag["db_pool_free"] = self._pool.get_idle_size()
         return diag
 
+    @logged(slow_ms=5000)
     async def shutdown(self) -> None:
         """Clean shutdown of all components."""
         self._stt_connected = False

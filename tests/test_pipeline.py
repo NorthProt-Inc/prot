@@ -903,7 +903,7 @@ class TestStreamResponseResetContent:
 
         # Mock the Anthropic client to raise before streaming
         client._client = MagicMock()
-        client._client.messages.stream = MagicMock(
+        client._client.beta.messages.stream = MagicMock(
             side_effect=RuntimeError("connection failed")
         )
 
