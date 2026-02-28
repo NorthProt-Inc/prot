@@ -28,13 +28,13 @@ src/prot/
   vad.py           # Silero VAD speech detection
   stt.py           # ElevenLabs Scribe v2 (WebSocket realtime STT)
   llm.py           # Claude API (Sonnet 4.6) — streaming responses + tool-use loop (max 3 rounds)
-  hass.py          # Home Assistant API client (get_state, call_service)
+  hass.py          # Home Assistant conversation API delegation (HassAgent)
   tts.py           # ElevenLabs TTS streaming
   playback.py      # paplay (PulseAudio) audio output with producer-consumer queue
   processing.py    # Orchestrates LLM→TTS→playback per utterance
   context.py       # 3-block system prompt builder + conversation data container
   trimmer.py       # Token-budget context trimmer (count_tokens API + heuristic fallback)
-  persona.py       # Axel persona definition (loaded from data/axel.json)
+  persona.py       # Axel persona definition (loaded from data/axel.xml)
   memory.py        # Background memory extraction + RAG context retrieval
   graphrag.py      # pgvector-backed entity/relationship/community storage
   community.py     # Louvain community detection + LLM summarization
