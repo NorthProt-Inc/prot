@@ -19,9 +19,11 @@ class Settings(BaseSettings):
     vad_threshold: float = 0.5
     vad_threshold_speaking: float = 0.8
     vad_prebuffer_chunks: int = 8
+    barge_in_enabled: bool = False
 
     # STT
     stt_language: str = "ko"
+    stt_silence_threshold_secs: float = 3.0
 
     # LLM
     claude_model: str = "claude-sonnet-4-6"
@@ -39,6 +41,7 @@ class Settings(BaseSettings):
     # HASS
     hass_url: str = "http://localhost:8123"
     hass_token: str = ""
+    hass_agent_id: str = "conversation.google_ai_conversation"
 
     # Database
     database_url: str = "postgresql://prot:prot@localhost:5432/prot"
@@ -56,7 +59,7 @@ class Settings(BaseSettings):
     rerank_top_k: int = 5
 
     # Memory
-    memory_extraction_model: str = "claude-sonnet-4-6"
+    memory_extraction_model: str = "claude-haiku-4-5-20251001"
     memory_extraction_interval: int = 3  # extract every Nth exchange
     memory_extraction_window_turns: int = 3  # deprecated: kept for config compat
     rag_context_target_tokens: int = 4096

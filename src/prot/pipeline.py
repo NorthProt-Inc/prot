@@ -81,7 +81,7 @@ class Pipeline:
         try:
             from prot.hass import HassAgent
             if settings.hass_token:
-                self._hass_agent = HassAgent(settings.hass_url, settings.hass_token)
+                self._hass_agent = HassAgent(settings.hass_url, settings.hass_token, settings.hass_agent_id)
                 logger.info("HASS agent ready")
         except Exception:
             logger.warning("HASS agent not available")

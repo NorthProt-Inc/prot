@@ -37,9 +37,10 @@ _TOOL_SCHEMA: dict = {
 class HassAgent:
     """Delegate smart home commands to HA's conversation agent."""
 
-    def __init__(self, url: str, token: str) -> None:
+    def __init__(self, url: str, token: str, agent_id: str = "") -> None:
         self._url = url.rstrip("/")
         self._token = token
+        self._agent_id = agent_id
         self._client = httpx.AsyncClient(timeout=_HASS_TIMEOUT)
 
     async def request(self, command: str) -> str:
@@ -48,7 +49,11 @@ class HassAgent:
             resp = await self._client.post(
                 f"{self._url}/api/conversation/process",
                 headers={"Authorization": f"Bearer {self._token}"},
-                json={"text": command, "language": "ko"},
+                json={
+                    "text": command,
+                    "language": "ko",
+                    **({"agent_id": self._agent_id} if self._agent_id else {}),
+                },
             )
             resp.raise_for_status()
             data = resp.json()
