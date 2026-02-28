@@ -50,7 +50,7 @@ class Pipeline:
         self._graphrag = None
         self._embedder = None
         self._reranker = None
-        self._hass_registry = None
+        self._hass_agent = None
         self._pool = None
 
         self._conversation_id = uuid4()
@@ -79,13 +79,12 @@ class Pipeline:
         self._loop = asyncio.get_running_loop()
 
         try:
-            from prot.hass import HassRegistry
+            from prot.hass import HassAgent
             if settings.hass_token:
-                self._hass_registry = HassRegistry(settings.hass_url, settings.hass_token)
-                await self._hass_registry.discover()
-                logger.info("HASS registry ready", entities=len(self._hass_registry._entities))
+                self._hass_agent = HassAgent(settings.hass_url, settings.hass_token)
+                logger.info("HASS agent ready")
         except Exception:
-            logger.warning("HASS registry not available")
+            logger.warning("HASS agent not available")
 
         try:
             from prot.db import init_pool
@@ -252,7 +251,7 @@ class Pipeline:
             await asyncio.sleep(self._error_backoff)
 
         system_blocks = self._ctx.build_system_blocks()
-        tools = self._ctx.build_tools(hass_registry=self._hass_registry)
+        tools = self._ctx.build_tools(hass_agent=self._hass_agent)
         trimmer = TokenBudgetTrimmer(
             llm=self._llm,
             system=system_blocks,
@@ -384,8 +383,8 @@ class Pipeline:
                 tool_results = []
                 for block in tool_blocks:
                     try:
-                        if block.name in ("hass_control", "hass_query") and self._hass_registry:
-                            result = await self._hass_registry.execute(block.name, block.input)
+                        if block.name == "hass_request" and self._hass_agent:
+                            result = await self._hass_agent.request(block.input["command"])
                         else:
                             result = await self._llm.execute_tool(block.name, block.input)
                         tool_results.append({
@@ -566,8 +565,8 @@ class Pipeline:
             closeables.append(self._memory.close)
         if self._embedder is not None:
             closeables.append(self._embedder.close)
-        if self._hass_registry is not None:
-            closeables.append(self._hass_registry.close)
+        if self._hass_agent is not None:
+            closeables.append(self._hass_agent.close)
         for close_fn in closeables:
             try:
                 await close_fn()
