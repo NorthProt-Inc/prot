@@ -237,6 +237,83 @@ class TestUpdateOverhead:
         assert llm.count_tokens.await_count == 1  # still 1, not 2
 
 
+def _tool_use_msg(tool_use_id: str) -> dict:
+    """Assistant message with a tool_use block."""
+    return {"role": "assistant", "content": [
+        {"type": "text", "text": "let me check"},
+        {"type": "tool_use", "id": tool_use_id, "name": "test", "input": {}},
+    ]}
+
+
+class TestToolUsePairPreservation:
+    """Trimming must never pass orphaned tool_result to count_tokens."""
+
+    async def test_count_tokens_never_sees_orphaned_tool_result(self):
+        """Every count_tokens call must receive valid messages."""
+        seen_messages: list[list[dict]] = []
+
+        async def tracking_count(system, tools, messages):
+            seen_messages.append(list(messages))
+            # Over budget on first 2 calls, under on third
+            return 40000 if len(seen_messages) <= 2 else 15000
+
+        llm = MagicMock()
+        llm.count_tokens = tracking_count
+
+        trimmer = TokenBudgetTrimmer(
+            llm=llm, system=[], tools=[], budget=30000,
+        )
+        messages = [
+            _msg("user", "old question"),
+            _tool_use_msg("t1"),
+            _tool_result("t1", "tool output"),
+            _msg("assistant", "answer from tool"),
+            _msg("user", "new question"),
+            _msg("assistant", "new answer"),
+        ]
+        result = await trimmer.fit(messages)
+
+        # Every intermediate count_tokens call must have valid messages
+        for i, msgs in enumerate(seen_messages):
+            assert msgs[0]["role"] == "user", (
+                f"count_tokens call {i} starts with {msgs[0]['role']}"
+            )
+            if isinstance(msgs[0]["content"], list):
+                assert not all(
+                    b.get("type") == "tool_result" for b in msgs[0]["content"]
+                ), f"count_tokens call {i} starts with orphaned tool_result"
+
+        # Final result is also valid
+        assert result[0]["role"] == "user"
+
+    async def test_removes_full_tool_exchange(self):
+        """A 4-message tool exchange is removed as a unit."""
+        call_count = 0
+
+        async def mock_count(system, tools, messages):
+            nonlocal call_count
+            call_count += 1
+            return 40000 if call_count == 1 else 15000
+
+        llm = MagicMock()
+        llm.count_tokens = mock_count
+
+        trimmer = TokenBudgetTrimmer(
+            llm=llm, system=[], tools=[], budget=30000,
+        )
+        messages = [
+            _msg("user", "q1"),
+            _tool_use_msg("t1"),
+            _tool_result("t1", "result"),
+            _msg("assistant", "a1"),
+            _msg("user", "q2"),
+            _msg("assistant", "a2"),
+        ]
+        result = await trimmer.fit(messages)
+        assert result[0]["content"] == "q2"
+        assert len(result) == 2
+
+
 class TestCountTokensFallback:
     """Fallback to heuristic when count_tokens API fails."""
 

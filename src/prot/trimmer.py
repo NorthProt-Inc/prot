@@ -81,10 +81,8 @@ class TokenBudgetTrimmer:
         # Trim oldest exchanges until within budget
         while token_count > self._budget and len(messages) > 2:
             messages = self._remove_oldest_exchange(messages)
+            messages = self._fix_boundary(messages)
             token_count = await self._count(messages)
-
-        # Ensure valid boundary (no orphaned tool_result at start)
-        messages = self._fix_boundary(messages)
 
         return messages
 
