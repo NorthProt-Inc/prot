@@ -1,6 +1,6 @@
 from pathlib import Path
 
-PERSONA_PATH = Path(__file__).parent.parent.parent / "data" / "axel.json"
+PERSONA_PATH = Path(__file__).parent.parent.parent / "data" / "axel.xml"
 
 
 def load_persona() -> str:

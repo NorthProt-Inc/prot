@@ -5,10 +5,10 @@ Requires=pipewire-pulse.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/cyan/workplace/prot
-EnvironmentFile=/home/cyan/workplace/prot/.env
+WorkingDirectory=/home/cyan/projects/prot
+EnvironmentFile=/home/cyan/projects/prot/.env
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/cyan/workplace/prot/.venv/bin/uvicorn prot.app:app --host 0.0.0.0 --port 8000 --log-level info
+ExecStart=/home/cyan/projects/prot/.venv/bin/uvicorn prot.app:app --host 0.0.0.0 --port 8000 --log-level info
 Restart=on-failure
 RestartSec=10
 
