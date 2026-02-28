@@ -70,7 +70,7 @@ def _make_pipeline():
     p._graphrag = None
     p._embedder = None
     p._reranker = None
-    p._hass_registry = None
+    p._hass_agent = None
     p._pool = None
 
     # Internal state
@@ -794,9 +794,9 @@ class TestToolUseHandling:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "hass_control"
+        tool_block.name = "hass_request"
         tool_block.id = "tool_123"
-        tool_block.input = {"entity_id": "light.living", "action": "turn_on"}
+        tool_block.input = {"command": "거실 조명 켜줘"}
 
         tc = 0
 
@@ -807,9 +807,9 @@ class TestToolUseHandling:
 
         p._llm.get_tool_use_blocks = fake_get_tool
 
-        mock_registry = AsyncMock()
-        mock_registry.execute = AsyncMock(return_value={"success": True, "message": "done"})
-        p._hass_registry = mock_registry
+        mock_agent = AsyncMock()
+        mock_agent.request = AsyncMock(return_value="done")
+        p._hass_agent = mock_agent
 
         p._llm.last_response_content = [MagicMock(type="text")]
 
@@ -826,7 +826,7 @@ class TestToolUseHandling:
             await p._process_response()
 
         assert call_count == 2
-        mock_registry.execute.assert_awaited_once()
+        mock_agent.request.assert_awaited_once()
         assert p._sm.state == State.ACTIVE
 
     async def test_tool_use_error_is_reported(self):
@@ -849,9 +849,9 @@ class TestToolUseHandling:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "hass_control"
+        tool_block.name = "hass_request"
         tool_block.id = "tool_456"
-        tool_block.input = {"entity_id": "light.bad", "action": "turn_on"}
+        tool_block.input = {"command": "잘못된 명령"}
 
         tc = 0
 
@@ -862,9 +862,9 @@ class TestToolUseHandling:
 
         p._llm.get_tool_use_blocks = fake_get_tool
 
-        mock_registry = AsyncMock()
-        mock_registry.execute = AsyncMock(side_effect=RuntimeError("HASS down"))
-        p._hass_registry = mock_registry
+        mock_agent = AsyncMock()
+        mock_agent.request = AsyncMock(side_effect=RuntimeError("HASS down"))
+        p._hass_agent = mock_agent
 
         p._llm.last_response_content = [MagicMock(type="text")]
 
@@ -934,9 +934,9 @@ class TestToolLoopExhaustion:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "hass_control"
+        tool_block.name = "hass_request"
         tool_block.id = "tool_exhaust"
-        tool_block.input = {"entity_id": "light.living", "action": "turn_on"}
+        tool_block.input = {"command": "거실 조명 켜줘"}
 
         call_count = 0
 
@@ -948,9 +948,9 @@ class TestToolLoopExhaustion:
 
         p._llm.get_tool_use_blocks = fake_get_tool
 
-        mock_registry = AsyncMock()
-        mock_registry.execute = AsyncMock(return_value={"success": True, "message": "done"})
-        p._hass_registry = mock_registry
+        mock_agent = AsyncMock()
+        mock_agent.request = AsyncMock(return_value="done")
+        p._hass_agent = mock_agent
 
         p._llm.last_response_content = [MagicMock(type="text")]
 
@@ -989,21 +989,21 @@ class TestInterruptionDuringToolExec:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "hass_control"
+        tool_block.name = "hass_request"
         tool_block.id = "tool_int"
-        tool_block.input = {"entity_id": "light.living", "action": "turn_on"}
+        tool_block.input = {"command": "거실 조명 켜줘"}
 
         p._llm.get_tool_use_blocks = MagicMock(return_value=[tool_block])
 
-        async def fake_execute(name, inp):
+        async def fake_request(command):
             # Simulate barge-in during tool execution
             p._sm.on_speech_detected()    # SPEAKING -> INTERRUPTED
             p._sm.on_interrupt_handled()  # INTERRUPTED -> LISTENING
-            return {"success": True, "message": "done"}
+            return "done"
 
-        mock_registry = AsyncMock()
-        mock_registry.execute = fake_execute
-        p._hass_registry = mock_registry
+        mock_agent = AsyncMock()
+        mock_agent.request = fake_request
+        p._hass_agent = mock_agent
 
         p._llm.last_response_content = [MagicMock(type="text")]
 
@@ -1168,15 +1168,15 @@ class TestPreBuffer:
 
 
 class TestPipelineHassRouting:
-    async def test_hass_tool_routed_to_registry(self):
-        """HASS tool calls are routed through _hass_registry, not _llm."""
+    async def test_hass_tool_routed_to_agent(self):
+        """hass_request tool calls are routed through _hass_agent."""
         p = _make_pipeline()
         p._sm.on_speech_detected()
         p._sm.on_utterance_complete()
 
-        mock_registry = AsyncMock()
-        mock_registry.execute = AsyncMock(return_value={"success": True, "message": "done"})
-        p._hass_registry = mock_registry
+        mock_agent = AsyncMock()
+        mock_agent.request = AsyncMock(return_value="조명을 켰습니다")
+        p._hass_agent = mock_agent
 
         call_count = 0
 
@@ -1189,9 +1189,9 @@ class TestPipelineHassRouting:
 
         tool_block = MagicMock()
         tool_block.type = "tool_use"
-        tool_block.name = "hass_control"
+        tool_block.name = "hass_request"
         tool_block.id = "tool_hass"
-        tool_block.input = {"entity_id": "light.wiz_1", "action": "turn_on"}
+        tool_block.input = {"command": "거실 조명 켜줘"}
 
         tc = 0
 
@@ -1215,16 +1215,16 @@ class TestPipelineHassRouting:
             ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
-        mock_registry.execute.assert_awaited_once_with("hass_control", tool_block.input)
+        mock_agent.request.assert_awaited_once_with("거실 조명 켜줘")
 
-    async def test_build_tools_called_with_registry(self):
-        """build_tools receives hass_registry parameter."""
+    async def test_build_tools_called_with_agent(self):
+        """build_tools receives hass_agent parameter."""
         p = _make_pipeline()
         p._sm.on_speech_detected()
         p._sm.on_utterance_complete()
 
-        mock_registry = MagicMock()
-        p._hass_registry = mock_registry
+        mock_agent = MagicMock()
+        p._hass_agent = mock_agent
 
         async def fake_stream(*a, **kw):
             yield "Hello."
@@ -1244,7 +1244,7 @@ class TestPipelineHassRouting:
             ms.elevenlabs_output_format = "pcm_24000"
             await p._process_response()
 
-        p._ctx.build_tools.assert_called_with(hass_registry=mock_registry)
+        p._ctx.build_tools.assert_called_with(hass_agent=mock_agent)
 
 
 class TestExtractionInterval:
