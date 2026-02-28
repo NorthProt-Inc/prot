@@ -33,7 +33,6 @@ src/prot/
   playback.py      # paplay (PulseAudio) audio output with producer-consumer queue
   processing.py    # Orchestrates LLM→TTS→playback per utterance
   context.py       # 3-block system prompt builder + conversation data container
-  trimmer.py       # Token-budget context trimmer (count_tokens API + heuristic fallback)
   persona.py       # Axel persona definition (loaded from data/axel.xml)
   memory.py        # Background memory extraction + RAG context retrieval
   graphrag.py      # pgvector-backed entity/relationship/community storage
@@ -62,17 +61,17 @@ src/prot/
 - **Tool loop**: LLM supports up to 3 tool-use rounds per response (Home Assistant, web search).
 - **Prompt caching**: System prompt uses 3-block layout optimized for Anthropic cache hits.
   Block order matters — persona (static) → RAG context (semi-static) → dynamic.
-- **Token-budget context**: `TokenBudgetTrimmer` trims messages to fit within `context_token_budget` tokens.
-  First call uses `count_tokens()` API; tool-loop iterations reuse `usage.input_tokens` from prior response.
-  Long `tool_result` blocks are truncated to `context_tool_result_max_chars`. ContextManager stays a pure data
-  container — trimming happens in pipeline via the trimmer.
+- **Server-side compaction**: Beta API (`compact-2026-01-12` + `context-management-2025-06-27`)
+  manages context automatically. Thinking clearing (keep 2 turns), tool result clearing (>30K tokens),
+  and compaction (>50K tokens) all run server-side. No client-side trimming needed.
 - **Memory extraction**: Runs in background after each exchange. Uses configurable model (default Sonnet 4.6) for entity/relationship extraction.
   Contextual embeddings (voyage-context-3) for document-aware entity storage. Reranker (rerank-2.5) refines RAG results.
   Community detection triggers every 5 extractions via CommunityDetector (Louvain clustering).
 - **Reranker**: RAG retrieval uses Voyage rerank-2.5 to re-score candidate results before context injection.
   Improves relevance of memory recall without increasing embedding dimensionality.
 - **DB optional**: App works without PostgreSQL — memory/RAG features gracefully degrade.
-- **GA API**: Uses `messages.stream()` (not beta). Adaptive thinking + effort are GA on Sonnet 4.6.
+- **Beta API**: Uses `beta.messages.stream()` with compaction + context editing betas.
+  Adaptive thinking + effort are GA features passed through beta endpoint.
 
 ## Testing
 
