@@ -29,8 +29,10 @@ class Settings(BaseSettings):
     claude_model: str = "claude-sonnet-4-6"
     claude_max_tokens: int = 4096
     claude_effort: str = "high"
-    context_token_budget: int = 30000
-    context_tool_result_max_chars: int = 2000
+    compaction_trigger: int = 50000
+    tool_clear_trigger: int = 30000
+    tool_clear_keep: int = 3
+    thinking_keep_turns: int = 2
 
     # TTS
     elevenlabs_model: str = "eleven_v3"
