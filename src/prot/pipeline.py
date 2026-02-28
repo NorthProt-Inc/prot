@@ -151,16 +151,17 @@ class Pipeline:
                     self._barge_in_count = 0
                     await self._handle_vad_speech()
                 elif state == State.SPEAKING:
-                    elapsed = time.monotonic() - self._speaking_since
-                    if elapsed < self._barge_in_grace:
-                        pass  # grace period — ignore VAD right after SPEAKING starts
-                    else:
-                        self._barge_in_count += 1
-                        if self._barge_in_count >= self._barge_in_frames:
-                            logger.info("Barge-in", frames=self._barge_in_count)
-                            self._barge_in_count = 0
-                            self._sm.on_speech_detected()
-                            await self._handle_barge_in()
+                    if settings.barge_in_enabled:
+                        elapsed = time.monotonic() - self._speaking_since
+                        if elapsed < self._barge_in_grace:
+                            pass  # grace period — ignore VAD right after SPEAKING starts
+                        else:
+                            self._barge_in_count += 1
+                            if self._barge_in_count >= self._barge_in_frames:
+                                logger.info("Barge-in", frames=self._barge_in_count)
+                                self._barge_in_count = 0
+                                self._sm.on_speech_detected()
+                                await self._handle_barge_in()
             else:
                 self._barge_in_count = 0
 
@@ -289,7 +290,7 @@ class Pipeline:
                                     qsz = audio_q.qsize()
                                     now = time.monotonic()
                                     if qsz >= 28 and now - _last_pressure_log >= 5.0:
-                                        logger.warning("Queue pressure", qsize=qsz)
+                                        logger.debug("Queue pressure", qsize=qsz)
                                         _last_pressure_log = now
                                 if _silence and self._sm.state != State.INTERRUPTED:
                                     await audio_q.put(_silence)
