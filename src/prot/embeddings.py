@@ -9,12 +9,10 @@ class AsyncVoyageEmbedder:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str | None = None,
     ):
         self._client = voyageai.AsyncClient(
             api_key=api_key or settings.voyage_api_key,
         )
-        self._model = model or settings.voyage_model
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
