@@ -5,6 +5,29 @@ from prot.logging import get_logger, logged
 
 logger = get_logger(__name__)
 
+_BETAS = ["compact-2026-01-12", "context-management-2025-06-27"]
+
+
+def _build_context_management() -> dict:
+    """Build context_management.edits from settings."""
+    return {
+        "edits": [
+            {
+                "type": "clear_thinking_20251015",
+                "keep": {"type": "thinking_turns", "value": settings.thinking_keep_turns},
+            },
+            {
+                "type": "clear_tool_uses_20250919",
+                "trigger": {"type": "input_tokens", "value": settings.tool_clear_trigger},
+                "keep": {"type": "tool_uses", "value": settings.tool_clear_keep},
+            },
+            {
+                "type": "compact_20260112",
+                "trigger": {"type": "input_tokens", "value": settings.compaction_trigger},
+            },
+        ],
+    }
+
 
 class LLMClient:
     def __init__(self, api_key: str | None = None):
@@ -20,15 +43,18 @@ class LLMClient:
         tools: list[dict] | None,
         messages: list[dict],
     ):
-        """Stream text deltas from Claude. Yields str chunks.
+        """Stream text deltas from Claude via Beta API with server-side context management.
 
-        system_blocks order: [persona (cached), rag (cached), dynamic (NOT cached)]
+        Context management (applied server-side, in order):
+          1. Thinking block clearing — keep last N turns
+          2. Tool result clearing — clear old tool results above trigger threshold
+          3. Compaction — summarize conversation above trigger threshold
         """
         self._cancelled = False
         self._last_response_content = None  # prevent stale tool blocks on generator abandonment
         logger.info("Streaming", model=settings.claude_model)
 
-        async with self._client.messages.stream(
+        async with self._client.beta.messages.stream(
             model=settings.claude_model,
             max_tokens=settings.claude_max_tokens,
             thinking={"type": "adaptive"},
@@ -36,11 +62,8 @@ class LLMClient:
             system=system_blocks,
             tools=tools,
             messages=messages,
-            # --- Compaction (Opus 4.6 only, re-enable when Sonnet supports it) ---
-            # betas=["compact-2026-01-12"],
-            # context_management={
-            #     "edits": [{"type": "compact_20260112"}],
-            # },
+            betas=_BETAS,
+            context_management=_build_context_management(),
         ) as stream:
             async for event in stream:
                 if self._cancelled:
@@ -79,13 +102,15 @@ class LLMClient:
         tools: list[dict] | None,
         messages: list[dict],
     ) -> int:
-        """Count input tokens for a message set using Anthropic API."""
-        result = await self._client.messages.count_tokens(
+        """Count input tokens via Beta API with context management applied."""
+        result = await self._client.beta.messages.count_tokens(
             model=settings.claude_model,
             system=system,
             tools=tools or [],
             messages=messages,
             thinking={"type": "adaptive"},
+            betas=_BETAS,
+            context_management=_build_context_management(),
         )
         return result.input_tokens
 

@@ -23,7 +23,7 @@ class TestLLMClient:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.stream.return_value = mock_stream
+            mock_client.beta.messages.stream.return_value = mock_stream
 
             client = LLMClient(api_key="test")
             chunks = []
@@ -37,8 +37,8 @@ class TestLLMClient:
             assert len(chunks) == 2
             assert chunks[0] == "안녕"
 
-    async def test_stream_uses_ga_api(self):
-        """stream_response uses GA messages.stream (not beta), no compaction."""
+    async def test_stream_uses_beta_api_with_context_management(self):
+        """stream_response uses beta messages.stream with compaction + context editing."""
         mock_stream = AsyncMock()
         mock_stream.__aenter__ = AsyncMock(return_value=mock_stream)
         mock_stream.__aexit__ = AsyncMock(return_value=False)
@@ -51,7 +51,7 @@ class TestLLMClient:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.stream.return_value = mock_stream
+            mock_client.beta.messages.stream.return_value = mock_stream
 
             client = LLMClient(api_key="test")
             async for _ in client.stream_response(
@@ -61,9 +61,18 @@ class TestLLMClient:
             ):
                 pass
 
-            call_kwargs = mock_client.messages.stream.call_args.kwargs
-            assert "betas" not in call_kwargs
-            assert "context_management" not in call_kwargs
+            mock_client.beta.messages.stream.assert_called_once()
+            call_kwargs = mock_client.beta.messages.stream.call_args.kwargs
+            assert "compact-2026-01-12" in call_kwargs["betas"]
+            assert "context-management-2025-06-27" in call_kwargs["betas"]
+            assert "context_management" in call_kwargs
+            edits = call_kwargs["context_management"]["edits"]
+            edit_types = [e["type"] for e in edits]
+            assert edit_types == [
+                "clear_thinking_20251015",
+                "clear_tool_uses_20250919",
+                "compact_20260112",
+            ]
             assert call_kwargs["thinking"] == {"type": "adaptive"}
 
     async def test_last_response_content_captured(self):
@@ -80,7 +89,7 @@ class TestLLMClient:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.stream.return_value = mock_stream
+            mock_client.beta.messages.stream.return_value = mock_stream
 
             client = LLMClient(api_key="test")
             async for _ in client.stream_response(
@@ -101,7 +110,7 @@ class TestLLMClient:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.stream.return_value = mock_stream
+            mock_client.beta.messages.stream.return_value = mock_stream
 
             client = LLMClient(api_key="test")
             async for _ in client.stream_response(
@@ -136,7 +145,7 @@ class TestLLMClient:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.stream.return_value = mock_stream
+            mock_client.beta.messages.stream.return_value = mock_stream
 
             client = LLMClient(api_key="test")
             async for _ in client.stream_response(
@@ -144,7 +153,7 @@ class TestLLMClient:
             ):
                 pass
 
-            call_kwargs = mock_client.messages.stream.call_args.kwargs
+            call_kwargs = mock_client.beta.messages.stream.call_args.kwargs
             assert call_kwargs["tools"] == []
 
     async def test_stream_passes_none_tools_as_none(self):
@@ -161,7 +170,7 @@ class TestLLMClient:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.stream.return_value = mock_stream
+            mock_client.beta.messages.stream.return_value = mock_stream
 
             client = LLMClient(api_key="test")
             async for _ in client.stream_response(
@@ -169,7 +178,7 @@ class TestLLMClient:
             ):
                 pass
 
-            call_kwargs = mock_client.messages.stream.call_args.kwargs
+            call_kwargs = mock_client.beta.messages.stream.call_args.kwargs
             assert call_kwargs["tools"] is None
 
 
@@ -188,7 +197,7 @@ class TestLastUsage:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.stream.return_value = mock_stream
+            mock_client.beta.messages.stream.return_value = mock_stream
 
             client = LLMClient(api_key="test")
             assert client.last_usage is None
@@ -211,7 +220,7 @@ class TestLastUsage:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.stream.return_value = mock_stream
+            mock_client.beta.messages.stream.return_value = mock_stream
 
             client = LLMClient(api_key="test")
             async for _ in client.stream_response(
@@ -227,7 +236,7 @@ class TestCountTokens:
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.count_tokens = AsyncMock(
+            mock_client.beta.messages.count_tokens = AsyncMock(
                 return_value=MagicMock(input_tokens=42)
             )
 
@@ -239,14 +248,14 @@ class TestCountTokens:
             )
 
             assert result == 42
-            call_kwargs = mock_client.messages.count_tokens.call_args.kwargs
+            call_kwargs = mock_client.beta.messages.count_tokens.call_args.kwargs
             assert call_kwargs["thinking"] == {"type": "adaptive"}
 
     async def test_count_tokens_passes_system_and_tools(self):
         with patch("prot.llm.AsyncAnthropic") as mock_cls:
             mock_client = MagicMock()
             mock_cls.return_value = mock_client
-            mock_client.messages.count_tokens = AsyncMock(
+            mock_client.beta.messages.count_tokens = AsyncMock(
                 return_value=MagicMock(input_tokens=100)
             )
 
@@ -257,7 +266,7 @@ class TestCountTokens:
 
             await client.count_tokens(system=system, tools=tools, messages=messages)
 
-            call_kwargs = mock_client.messages.count_tokens.call_args.kwargs
+            call_kwargs = mock_client.beta.messages.count_tokens.call_args.kwargs
             assert call_kwargs["system"] == system
             assert call_kwargs["tools"] == tools
             assert call_kwargs["messages"] == messages
@@ -295,7 +304,7 @@ class TestStreamResponseResetContent:
 
         # Mock the Anthropic client to raise before streaming
         client._client = MagicMock()
-        client._client.messages.stream = MagicMock(
+        client._client.beta.messages.stream = MagicMock(
             side_effect=RuntimeError("connection failed")
         )
 
