@@ -52,6 +52,7 @@ class STTClient:
             f"&language_code={settings.stt_language}"
             f"&audio_format=pcm_{settings.sample_rate}"
             f"&commit_strategy=vad"
+            f"&vad_silence_threshold_secs={settings.stt_silence_threshold_secs}"
         )
         headers = {"xi-api-key": self._api_key}
         delays = [0.5, 1.0, 2.0]
