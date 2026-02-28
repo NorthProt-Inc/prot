@@ -1,9 +1,6 @@
-"""Home Assistant integration — auto-discovery, 2-tool split, enum-constrained schemas."""
+"""Home Assistant integration — conversation API delegation."""
 
 from __future__ import annotations
-
-import colorsys
-import re
 
 import httpx
 
@@ -11,261 +8,68 @@ from prot.logging import get_logger
 
 logger = get_logger(__name__)
 
-_HASS_TIMEOUT = httpx.Timeout(10.0)
-_ALLOWED_DOMAINS = {"light", "fan", "weather", "sensor", "switch", "climate"}
+_HASS_TIMEOUT = httpx.Timeout(15.0)
 
-_COLOR_NAMES: dict[str, list[int]] = {
-    # English
-    "red": [255, 0, 0],
-    "green": [0, 128, 0],
-    "blue": [0, 0, 255],
-    "yellow": [255, 255, 0],
-    "orange": [255, 165, 0],
-    "purple": [128, 0, 128],
-    "pink": [255, 192, 203],
-    "white": [255, 255, 255],
-    "warm": [255, 180, 107],
-    "cool": [166, 209, 255],
-    # Korean
-    "빨강": [255, 0, 0],
-    "파랑": [0, 0, 255],
-    "초록": [0, 128, 0],
-    "노랑": [255, 255, 0],
-    "분홍": [255, 192, 203],
-    "보라": [128, 0, 128],
-    "주황": [255, 165, 0],
-    "하양": [255, 255, 255],
-    "흰색": [255, 255, 255],
+_TOOL_SCHEMA: dict = {
+    "name": "hass_request",
+    "description": (
+        "Send a natural language command to the Home Assistant agent. "
+        "Use for any smart home task: device control, state queries, "
+        "automation triggers, scene activation, etc."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": (
+                    "Natural language command for Home Assistant. "
+                    "Be specific with device names and values. "
+                    "Example: '조명 밝기 40%, 색온도 2700K로 변경'"
+                ),
+            }
+        },
+        "required": ["command"],
+    },
 }
 
-_HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
-_RGB_RE = re.compile(r"^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$")
-_HSL_RE = re.compile(r"^(?:hsl\()?\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)?$")
 
-
-def parse_color(input: str) -> list[int] | None:
-    """Parse color string to [R, G, B]. Returns None if unrecognized."""
-    if not input:
-        return None
-    s = input.strip()
-
-    # Named colors (case-insensitive for English)
-    lower = s.lower()
-    if lower in _COLOR_NAMES:
-        return list(_COLOR_NAMES[lower])
-    if s in _COLOR_NAMES:
-        return list(_COLOR_NAMES[s])
-
-    # Hex
-    m = _HEX_RE.match(s)
-    if m:
-        h = m.group(1)
-        return [int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)]
-
-    # RGB
-    m = _RGB_RE.match(s)
-    if m:
-        return [int(m.group(1)), int(m.group(2)), int(m.group(3))]
-
-    # HSL
-    m = _HSL_RE.match(s)
-    if m:
-        h, s_pct, l_pct = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        r, g, b = colorsys.hls_to_rgb(h / 360.0, l_pct / 100.0, s_pct / 100.0)
-        return [round(r * 255), round(g * 255), round(b * 255)]
-
-    return None
-
-
-class HassRegistry:
-    """Auto-discovers HASS entities and builds enum-constrained tool schemas."""
+class HassAgent:
+    """Delegate smart home commands to HA's conversation agent."""
 
     def __init__(self, url: str, token: str) -> None:
         self._url = url.rstrip("/")
         self._token = token
         self._client = httpx.AsyncClient(timeout=_HASS_TIMEOUT)
-        self._entities: list[dict] = []
 
-    @property
-    def _known_ids(self) -> set[str]:
-        """Set of discovered entity IDs for validation."""
-        return {e["entity_id"] for e in self._entities}
-
-    async def discover(self) -> None:
-        """Fetch entities from HASS API. Called once at startup."""
-        headers = {"Authorization": f"Bearer {self._token}"}
+    async def request(self, command: str) -> str:
+        """Send command to HA conversation agent, return response text."""
         try:
-            r = await self._client.get(f"{self._url}/api/states", headers=headers)
-            if r.status_code != 200:
-                logger.warning("HASS discovery failed", status=r.status_code)
-                self._entities = []
-                return
-            all_entities = r.json()
-            self._entities = [
-                e for e in all_entities
-                if e["entity_id"].split(".", 1)[0] in _ALLOWED_DOMAINS
-            ]
-            logger.info("HASS discovered", count=len(self._entities))
-        except Exception:
-            logger.warning("HASS discovery failed — no HASS tools", exc_info=True)
-            self._entities = []
-
-    def build_tool_schemas(self) -> list[dict]:
-        """Build hass_control + hass_query tool definitions with entity enums."""
-        if not self._entities:
-            return []
-
-        entity_ids = [e["entity_id"] for e in self._entities]
-        entity_list = ", ".join(
-            f'{e["entity_id"]} ({e["attributes"].get("friendly_name", "")})'
-            for e in self._entities
-        )
-
-        hass_control: dict = {
-            "name": "hass_control",
-            "description": (
-                f"Control Home Assistant device.\n"
-                f"Available: {entity_list}\n"
-                f"color and color_temp_kelvin are mutually exclusive; "
-                f"color_temp_kelvin takes priority."
-            ),
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "entity_id": {"type": "string", "enum": entity_ids},
-                    "action": {
-                        "type": "string",
-                        "enum": ["turn_on", "turn_off", "toggle"],
-                    },
-                    "brightness": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 100,
-                        "description": "Brightness percentage (lights only)",
-                    },
-                    "color": {
-                        "type": "string",
-                        "description": "Color name (red, 빨강, warm, #FF0000) — lights only",
-                    },
-                    "color_temp_kelvin": {
-                        "type": "integer",
-                        "minimum": 2200,
-                        "maximum": 6500,
-                        "description": "Color temperature in Kelvin — lights only",
-                    },
-                },
-                "required": ["entity_id", "action"],
-            },
-        }
-        hass_query: dict = {
-            "name": "hass_query",
-            "description": "Query Home Assistant entity states.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "entity_id": {"type": "string", "enum": entity_ids},
-                    "query_type": {
-                        "type": "string",
-                        "enum": ["get_state", "list_entities"],
-                    },
-                },
-                "required": ["query_type"],
-            },
-            "cache_control": {"type": "ephemeral"},
-        }
-        return [hass_control, hass_query]
-
-    async def execute(self, tool_name: str, tool_input: dict) -> dict:
-        """Dispatch tool call to the appropriate handler."""
-        if tool_name == "hass_control":
-            return await self.execute_control(tool_input)
-        elif tool_name == "hass_query":
-            return await self.execute_query(tool_input)
-        return {"error": f"Unknown HASS tool: {tool_name}"}
-
-    async def execute_control(self, tool_input: dict) -> dict:
-        """Execute a control action (turn_on/turn_off/toggle)."""
-        entity_id = tool_input.get("entity_id", "")
-        action = tool_input.get("action", "")
-
-        if entity_id not in self._known_ids:
-            return {"error": f"Invalid entity_id: {entity_id}"}
-
-        domain = entity_id.split(".", 1)[0]
-        service_data: dict = {"entity_id": entity_id}
-
-        if domain == "light":
-            brightness = tool_input.get("brightness")
-            color = tool_input.get("color")
-            color_temp = tool_input.get("color_temp_kelvin")
-
-            if brightness is not None:
-                service_data["brightness_pct"] = brightness
-            if color_temp is not None:
-                service_data["color_temp_kelvin"] = color_temp
-            elif color is not None:
-                rgb = parse_color(color)
-                if rgb:
-                    service_data["rgb_color"] = rgb
-
-        headers = {"Authorization": f"Bearer {self._token}"}
-        try:
-            r = await self._client.post(
-                f"{self._url}/api/services/{domain}/{action}",
-                headers=headers,
-                json=service_data,
+            resp = await self._client.post(
+                f"{self._url}/api/conversation/process",
+                headers={"Authorization": f"Bearer {self._token}"},
+                json={"text": command, "language": "ko"},
             )
-            if r.status_code != 200:
-                return {"error": f"HASS returned {r.status_code}"}
-        except Exception as exc:
-            return {"error": f"HASS request failed: {exc}"}
+            resp.raise_for_status()
+            data = resp.json()
+            return data["response"]["speech"]["plain"]["speech"]
+        except httpx.ConnectError:
+            logger.warning("HASS connection failed")
+            return "Home Assistant에 연결할 수 없습니다"
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == 401:
+                logger.warning("HASS auth failed")
+                return "Home Assistant 인증 실패"
+            logger.warning("HASS HTTP error", status=status)
+            return f"Home Assistant 오류 (HTTP {status})"
+        except httpx.TimeoutException:
+            logger.warning("HASS request timed out")
+            return "Home Assistant 응답 시간 초과"
 
-        parts = [f"{entity_id} {action.replace('_', ' ')}"]
-        if "color_temp_kelvin" in service_data:
-            parts.append(f"({service_data['color_temp_kelvin']}K)")
-        elif "rgb_color" in service_data:
-            parts.append(f"({tool_input.get('color', '')})")
-        if "brightness_pct" in service_data:
-            parts.append(f"({service_data['brightness_pct']}%)")
-
-        return {"success": True, "message": " ".join(parts)}
-
-    async def execute_query(self, tool_input: dict) -> dict:
-        """Execute a query (get_state or list_entities)."""
-        query_type = tool_input.get("query_type", "")
-
-        if query_type == "list_entities":
-            return {
-                "entities": [
-                    {
-                        "entity_id": e["entity_id"],
-                        "friendly_name": e["attributes"].get("friendly_name", ""),
-                    }
-                    for e in self._entities
-                ]
-            }
-
-        if query_type == "get_state":
-            entity_id = tool_input.get("entity_id")
-            if not entity_id:
-                return {"error": "entity_id is required for get_state"}
-
-            if entity_id not in self._known_ids:
-                return {"error": f"Invalid entity_id: {entity_id}"}
-
-            headers = {"Authorization": f"Bearer {self._token}"}
-            try:
-                r = await self._client.get(
-                    f"{self._url}/api/states/{entity_id}",
-                    headers=headers,
-                )
-                if r.status_code != 200:
-                    return {"error": f"HASS returned {r.status_code}"}
-                return r.json()
-            except Exception as exc:
-                return {"error": f"HASS request failed: {exc}"}
-
-        return {"error": f"Unknown query_type: {query_type}"}
+    def build_tool(self) -> dict:
+        """Return single tool schema for Claude."""
+        return dict(_TOOL_SCHEMA)
 
     async def close(self) -> None:
         """Close the httpx client."""
