@@ -51,7 +51,7 @@ class ContextManager:
         }
         return [block1_persona, block2_rag, block3_dynamic]
 
-    def build_tools(self, hass_registry=None) -> list[dict]:
+    def build_tools(self, hass_agent=None) -> list[dict]:
         """Build tool definitions with cache on last tool."""
         web_search: dict = {
             "type": "web_search_20250305",
@@ -66,8 +66,8 @@ class ContextManager:
         }
         tools = [web_search]
 
-        if hass_registry is not None:
-            tools.extend(hass_registry.build_tool_schemas())
+        if hass_agent is not None:
+            tools.append(hass_agent.build_tool())
 
         # Ensure last tool has cache_control
         if "cache_control" not in tools[-1]:
