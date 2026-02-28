@@ -11,9 +11,11 @@ Real-time voice conversation system with the Axel persona — a streaming audio 
 - **GraphRAG long-term memory** — Entity/relationship extraction with contextual embeddings, stored in PostgreSQL + pgvector with HNSW indexes
 - **Community detection** — Louvain clustering on entity graph with auto-summarization, triggered every N extractions
 - **Prompt caching** — 3-block system prompt layout (persona, RAG context, dynamic) optimized for Anthropic cache hits
-- **Home Assistant integration** — Tool-use loop for smart home control (get_state, call_service)
+- **Token-budget context management** — Dynamic conversation trimming via token counting (replaces fixed turn window)
+- **Home Assistant delegation** — Single `hass_request` tool delegates to HA conversation API agent
 - **Web search** — Built-in web search tool via Claude API
 - **Agentic tool loop** — Multi-iteration tool execution with up to 3 rounds per response
+- **Circuit breaker** — Automatic recovery from consecutive API failures
 - **Structured logging** — Modular logging subsystem with structured formatters, handlers, and turn-scoped timers
 
 ---
@@ -30,7 +32,7 @@ graph TD
     TTS --> PLAY[paplay<br/>PulseAudio]
 
     LLM -->|tool_use| TOOLS{Tool Router}
-    TOOLS --> HASS[Home Assistant API]
+    TOOLS --> HASS[Home Assistant<br/>Conversation API]
     TOOLS --> WEB[Web Search]
     TOOLS -->|tool_result| LLM
 
@@ -65,7 +67,7 @@ stateDiagram-v2
 src/prot/              # Core application
   logging/             # Structured logging subsystem
 tests/                 # Unit & integration tests
-data/                  # Persona config (axel.json) + runtime data
+data/                  # Persona config (axel.xml) + runtime data
 deploy/                # systemd service files
 scripts/               # Dev launcher (run.sh)
 ```
@@ -142,8 +144,8 @@ systemctl --user enable --now prot
 | `VOYAGE_CONTEXT_MODEL` | No | `voyage-context-3` | Contextual embedding model |
 | `RERANK_MODEL` | No | `rerank-2.5` | Voyage reranker model |
 | `RERANK_TOP_K` | No | `5` | Reranker top-K results |
-| `MEMORY_EXTRACTION_MODEL` | No | `claude-sonnet-4-6` | Model for memory extraction |
-| `MEMORY_EXTRACTION_WINDOW_TURNS` | No | `3` | Turns to extract per cycle |
+| `MEMORY_EXTRACTION_MODEL` | No | `claude-haiku-4-5-20251001` | Model for memory extraction |
+| `MEMORY_EXTRACTION_INTERVAL` | No | `3` | Extract every Nth exchange |
 | `RAG_CONTEXT_TARGET_TOKENS` | No | `4096` | RAG context target token budget |
 | `RAG_TOP_K` | No | `10` | RAG retrieval top-K candidates |
 | `DATABASE_URL` | No | `postgresql://prot:prot@localhost:5432/prot` | PostgreSQL connection string |
@@ -152,17 +154,22 @@ systemctl --user enable --now prot
 | `DB_EXPORT_DIR` | No | `data/db` | CSV export directory on shutdown |
 | `HASS_URL` | No | `http://localhost:8123` | Home Assistant URL |
 | `HASS_TOKEN` | No | — | Home Assistant long-lived access token |
+| `HASS_AGENT_ID` | No | `conversation.google_ai_conversation` | HA conversation agent entity ID |
 | `MIC_DEVICE_INDEX` | No | (system default) | PyAudio input device index |
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude model ID |
 | `CLAUDE_MAX_TOKENS` | No | `4096` | Claude max output tokens |
 | `CLAUDE_EFFORT` | No | `high` | Claude thinking effort (low/medium/high) |
-| `CONTEXT_MAX_TURNS` | No | `10` | Sliding window size (recent turns sent to LLM) |
+| `CONTEXT_TOKEN_BUDGET` | No | `30000` | Max input tokens for conversation context |
+| `CONTEXT_TOOL_RESULT_MAX_CHARS` | No | `2000` | Max chars per tool_result before truncation |
+| `BARGE_IN_ENABLED` | No | `false` | Enable barge-in (interrupt while speaking) |
 | `VAD_THRESHOLD` | No | `0.5` | VAD speech detection threshold |
 | `VAD_THRESHOLD_SPEAKING` | No | `0.8` | VAD threshold during SPEAKING (barge-in) |
 | `VAD_PREBUFFER_CHUNKS` | No | `8` | VAD pre-buffer chunk count |
 | `SAMPLE_RATE` | No | `16000` | Audio sample rate (Hz) |
 | `CHUNK_SIZE` | No | `512` | Audio chunk size (bytes) |
 | `STT_LANGUAGE` | No | `ko` | STT recognition language |
+| `STT_SILENCE_THRESHOLD_SECS` | No | `3.0` | STT silence timeout (seconds) |
+| `TTS_SENTENCE_SILENCE_MS` | No | `200` | Silence between TTS sentences (ms) |
 | `ACTIVE_TIMEOUT` | No | `30` | Seconds before ACTIVE → IDLE timeout |
 | `COMMUNITY_REBUILD_INTERVAL` | No | `5` | Extractions between community rebuilds |
 | `COMMUNITY_MIN_ENTITIES` | No | `5` | Minimum entities before community detection runs |

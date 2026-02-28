@@ -30,7 +30,7 @@ logs/
 
 # Data (conversations + DB exports)
 data/
-!data/axel.json
+!data/axel.xml
 
 # Working notes
 docs/mem.md

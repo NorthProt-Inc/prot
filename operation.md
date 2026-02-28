@@ -44,6 +44,7 @@ cp .env.example .env
 | `MIC_DEVICE_INDEX` | No | (system default) | PyAudio 입력 장치 인덱스 |
 | `SAMPLE_RATE` | No | `16000` | 오디오 샘플레이트 (Hz) |
 | `CHUNK_SIZE` | No | `512` | 오디오 청크 크기 |
+| `BARGE_IN_ENABLED` | No | `false` | Barge-in (SPEAKING 중 끼어들기) 활성화 여부 |
 | `VAD_THRESHOLD` | No | `0.5` | VAD 음성 감지 임계값 (IDLE/ACTIVE) |
 | `VAD_THRESHOLD_SPEAKING` | No | `0.8` | VAD 임계값 (SPEAKING 상태, barge-in) |
 | `VAD_PREBUFFER_CHUNKS` | No | `8` | VAD 프리버퍼 청크 수 |
@@ -53,13 +54,16 @@ cp .env.example .env
 | 변수 | 필수 | 기본값 | 설명 |
 |------|------|--------|------|
 | `STT_LANGUAGE` | No | `ko` | STT 인식 언어 |
+| `STT_SILENCE_THRESHOLD_SECS` | No | `3.0` | STT 무음 감지 타임아웃 (초) |
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude 모델 ID |
 | `CLAUDE_MAX_TOKENS` | No | `4096` | Claude 최대 출력 토큰 |
 | `CLAUDE_EFFORT` | No | `high` | Claude thinking effort (low/medium/high) |
-| `CONTEXT_MAX_TURNS` | No | `10` | 슬라이딩 윈도우 크기 (최근 N턴만 LLM에 전달) |
+| `CONTEXT_TOKEN_BUDGET` | No | `30000` | 대화 컨텍스트 최대 입력 토큰 수 |
+| `CONTEXT_TOOL_RESULT_MAX_CHARS` | No | `2000` | tool_result 블록 최대 문자 수 (초과 시 truncate) |
 | `ELEVENLABS_VOICE_ID` | No | `s3lKyrFAzTUpzy3ZLwbM` | ElevenLabs voice ID |
 | `ELEVENLABS_MODEL` | No | `eleven_v3` | ElevenLabs TTS 모델 |
 | `ELEVENLABS_OUTPUT_FORMAT` | No | `pcm_24000` | TTS 출력 오디오 포맷 |
+| `TTS_SENTENCE_SILENCE_MS` | No | `200` | 문장 간 무음 간격 (ms) |
 
 #### Home Assistant
 
@@ -67,6 +71,7 @@ cp .env.example .env
 |------|------|--------|------|
 | `HASS_URL` | No | `http://localhost:8123` | Home Assistant URL |
 | `HASS_TOKEN` | No | — | Home Assistant long-lived access token |
+| `HASS_AGENT_ID` | No | `conversation.google_ai_conversation` | HA conversation agent entity ID |
 
 #### Database / Memory
 
@@ -77,11 +82,12 @@ cp .env.example .env
 | `DB_POOL_MAX` | No | `10` | DB 커넥션 풀 최대 크기 |
 | `DB_EXPORT_DIR` | No | `data/db` | DB 종료 시 CSV 내보내기 디렉토리 |
 | `VOYAGE_API_KEY` | No | — | Voyage AI 임베딩 API 키 |
+| `VOYAGE_MODEL` | No | `voyage-4` | 기본 임베딩 모델 |
 | `VOYAGE_CONTEXT_MODEL` | No | `voyage-context-3` | Contextual 임베딩 모델 |
 | `RERANK_MODEL` | No | `rerank-2.5` | Voyage 리랭커 모델 |
 | `RERANK_TOP_K` | No | `5` | 리랭커 상위 결과 수 |
-| `MEMORY_EXTRACTION_MODEL` | No | `claude-sonnet-4-6` | Memory 추출용 모델 |
-| `MEMORY_EXTRACTION_WINDOW_TURNS` | No | `3` | 추출 주기당 턴 수 |
+| `MEMORY_EXTRACTION_MODEL` | No | `claude-haiku-4-5-20251001` | Memory 추출용 모델 |
+| `MEMORY_EXTRACTION_INTERVAL` | No | `3` | N번째 교환마다 추출 실행 |
 | `RAG_CONTEXT_TARGET_TOKENS` | No | `4096` | RAG 컨텍스트 목표 토큰 수 |
 | `RAG_TOP_K` | No | `10` | RAG 검색 상위 결과 수 |
 | `COMMUNITY_REBUILD_INTERVAL` | No | `5` | Community detection 재구축 간격 (추출 횟수) |
