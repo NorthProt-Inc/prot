@@ -39,8 +39,6 @@ def _make_pipeline():
     p._llm.cancel = MagicMock()
     p._llm.close = AsyncMock()
     p._llm.get_tool_use_blocks = MagicMock(return_value=[])
-    p._llm.count_tokens = AsyncMock(return_value=1000)
-    p._llm.last_usage = MagicMock(input_tokens=1000)
 
     # TTS
     p._tts = MagicMock()
@@ -490,8 +488,6 @@ class TestSilencePadding:
             ms.active_timeout = 999
             ms.tts_sentence_silence_ms = 200
             ms.elevenlabs_output_format = "pcm_24000"
-            ms.context_token_budget = 30000
-            ms.context_tool_result_max_chars = 2000
             await p._process_response()
 
         assert tts_call_count == 2
@@ -533,8 +529,6 @@ class TestSilencePadding:
             ms.active_timeout = 999
             ms.tts_sentence_silence_ms = 0
             ms.elevenlabs_output_format = "pcm_24000"
-            ms.context_token_budget = 30000
-            ms.context_tool_result_max_chars = 2000
             await p._process_response()
 
         # Only audio chunks, no silence
@@ -1338,8 +1332,6 @@ class TestCircuitBreaker:
             ms.active_timeout = 999
             ms.tts_sentence_silence_ms = 0
             ms.elevenlabs_output_format = "pcm_24000"
-            ms.context_token_budget = 30000
-            ms.context_tool_result_max_chars = 2000
 
             for i in range(3):
                 p._sm.on_speech_detected()
@@ -1373,8 +1365,6 @@ class TestCircuitBreaker:
             ms.active_timeout = 999
             ms.tts_sentence_silence_ms = 0
             ms.elevenlabs_output_format = "pcm_24000"
-            ms.context_token_budget = 30000
-            ms.context_tool_result_max_chars = 2000
             with patch("asyncio.sleep", new_callable=AsyncMock):
                 await p._process_response()
 
@@ -1400,8 +1390,6 @@ class TestCircuitBreaker:
             ms.active_timeout = 999
             ms.tts_sentence_silence_ms = 0
             ms.elevenlabs_output_format = "pcm_24000"
-            ms.context_token_budget = 30000
-            ms.context_tool_result_max_chars = 2000
             await p._process_response()
 
         assert p._error_backoff <= 30.0
