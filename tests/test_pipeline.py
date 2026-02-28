@@ -87,6 +87,8 @@ def _make_pipeline():
     p._background_tasks = set()
     p._session_msg_offset = 0
     p._exchange_count = 0
+    p._consecutive_errors = 0
+    p._error_backoff = 0.0
 
     return p
 
@@ -1316,3 +1318,90 @@ class TestShutdownFinalExtraction:
         p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
 
         await p.shutdown()  # should not raise
+
+
+class TestCircuitBreaker:
+    """Consecutive LLM failures trigger exponential backoff."""
+
+    async def test_increments_consecutive_errors(self):
+        p = _make_pipeline()
+
+        async def failing_stream(*a, **kw):
+            raise RuntimeError("API down")
+            yield  # pragma: no cover — makes it an async generator
+
+        p._llm.stream_response = failing_stream
+        p._llm.last_response_content = None
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
+            ms.context_token_budget = 30000
+            ms.context_tool_result_max_chars = 2000
+
+            for i in range(3):
+                p._sm.on_speech_detected()
+                p._sm.on_utterance_complete()
+                await p._process_response()
+
+        assert p._consecutive_errors == 3
+        assert p._error_backoff > 0
+
+    async def test_backoff_resets_on_success(self):
+        p = _make_pipeline()
+        p._consecutive_errors = 3
+        p._error_backoff = 5.0
+
+        async def ok_stream(*a, **kw):
+            yield "Hi."
+
+        p._llm.stream_response = ok_stream
+        p._llm.last_response_content = "Hi."
+
+        async def fake_tts(text):
+            yield b"\x00" * 100
+
+        p._tts.stream_audio = fake_tts
+
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
+            ms.context_token_budget = 30000
+            ms.context_tool_result_max_chars = 2000
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                await p._process_response()
+
+        assert p._consecutive_errors == 0
+        assert p._error_backoff == 0.0
+
+    async def test_backoff_caps_at_max(self):
+        p = _make_pipeline()
+        p._consecutive_errors = 10
+        p._error_backoff = 0.0
+
+        async def failing_stream(*a, **kw):
+            raise RuntimeError("API down")
+            yield  # pragma: no cover
+
+        p._llm.stream_response = failing_stream
+
+        p._sm.on_speech_detected()
+        p._sm.on_utterance_complete()
+
+        with patch("prot.pipeline.settings") as ms:
+            ms.claude_model = "test"
+            ms.active_timeout = 999
+            ms.tts_sentence_silence_ms = 0
+            ms.elevenlabs_output_format = "pcm_24000"
+            ms.context_token_budget = 30000
+            ms.context_tool_result_max_chars = 2000
+            await p._process_response()
+
+        assert p._error_backoff <= 30.0

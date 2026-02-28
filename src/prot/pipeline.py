@@ -66,6 +66,8 @@ class Pipeline:
         self._background_tasks: set[asyncio.Task] = set()
         self._session_msg_offset: int = 0
         self._exchange_count: int = 0
+        self._consecutive_errors: int = 0
+        self._error_backoff: float = 0.0
 
     @property
     def state(self) -> StateMachine:
@@ -234,6 +236,8 @@ class Pipeline:
         await self._process_response()
 
     _MAX_TOOL_ITERATIONS = 3
+    _MAX_CONSECUTIVE_ERRORS = 3
+    _MAX_BACKOFF_SECONDS = 30.0
 
     @logged(slow_ms=2000)
     async def _process_response(self) -> None:
@@ -242,6 +246,11 @@ class Pipeline:
         Supports agentic tool loop: if the LLM returns tool_use blocks,
         tools are executed and results fed back for up to _MAX_TOOL_ITERATIONS.
         """
+        if self._error_backoff > 0:
+            logger.warning("Error backoff", delay=self._error_backoff,
+                           consecutive_errors=self._consecutive_errors)
+            await asyncio.sleep(self._error_backoff)
+
         system_blocks = self._ctx.build_system_blocks()
         tools = self._ctx.build_tools(hass_registry=self._hass_registry)
         trimmer = TokenBudgetTrimmer(
@@ -354,6 +363,8 @@ class Pipeline:
                         self._ctx.add_message("assistant", response_content or full_text)
                         self._save_message_bg("assistant", full_text)
                         logger.info("Response done", chars=len(full_text))
+                        self._consecutive_errors = 0
+                        self._error_backoff = 0.0
                         reset_turn()
                         self._start_active_timeout()
                         self._extract_memories_bg()
@@ -413,6 +424,15 @@ class Pipeline:
 
         except Exception:
             logger.exception("Error in _process_response")
+            self._consecutive_errors += 1
+            if self._consecutive_errors >= self._MAX_CONSECUTIVE_ERRORS:
+                self._error_backoff = min(
+                    self._MAX_BACKOFF_SECONDS,
+                    5.0 * 2 ** (self._consecutive_errors - self._MAX_CONSECUTIVE_ERRORS),
+                )
+                logger.error("Circuit breaker active",
+                             consecutive_errors=self._consecutive_errors,
+                             backoff=self._error_backoff)
             try:
                 await self._player.kill()
             except Exception:
