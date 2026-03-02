@@ -22,9 +22,8 @@ MODULE_MAP: dict[str, tuple[str, str]] = {
     "app":              ("APP", "\033[38;5;248m"),
     "config":           ("CFG", "\033[38;5;243m"),
     "hass":             ("HAS", "\033[38;5;214m"),
-    "community":        ("COM", "\033[38;5;183m"),
+    "decay":            ("DCY", "\033[38;5;183m"),
     "state":            ("STA", "\033[96m"),
-    "conversation_log": ("LOG", "\033[38;5;245m"),
 }
 
 RESET = "\033[0m"
