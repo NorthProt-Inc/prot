@@ -10,6 +10,13 @@ _BETAS = ["compact-2026-01-12", "context-management-2025-06-27"]
 
 def _build_context_management() -> dict:
     """Build context_management.edits from settings."""
+    compact_edit = {
+        "type": "compact_20260112",
+        "trigger": {"type": "input_tokens", "value": settings.compaction_trigger},
+    }
+    if settings.pause_after_compaction:
+        compact_edit["pause"] = True
+
     return {
         "edits": [
             {
@@ -21,10 +28,7 @@ def _build_context_management() -> dict:
                 "trigger": {"type": "input_tokens", "value": settings.tool_clear_trigger},
                 "keep": {"type": "tool_uses", "value": settings.tool_clear_keep},
             },
-            {
-                "type": "compact_20260112",
-                "trigger": {"type": "input_tokens", "value": settings.compaction_trigger},
-            },
+            compact_edit,
         ],
     }
 
@@ -35,6 +39,7 @@ class LLMClient:
         self._cancelled = False
         self._last_response_content = None
         self._last_usage = None
+        self._last_compaction_summary = None
 
     @logged(slow_ms=2000, log_args=True)
     async def stream_response(
@@ -76,6 +81,14 @@ class LLMClient:
             final = await stream.get_final_message()
             self._last_response_content = final.content
             self._last_usage = final.usage
+
+            # Detect compaction events
+            self._last_compaction_summary = None
+            if getattr(final, "stop_reason", None) == "compaction":
+                for block in final.content:
+                    if getattr(block, "type", None) == "compaction":
+                        self._last_compaction_summary = getattr(block, "summary", None)
+                        break
         except Exception:
             self._last_response_content = None
             self._last_usage = None
@@ -84,6 +97,11 @@ class LLMClient:
     def last_usage(self):
         """Token usage from the last streamed response."""
         return self._last_usage
+
+    @property
+    def last_compaction_summary(self) -> str | None:
+        """Compaction summary from last stream, if compaction occurred."""
+        return self._last_compaction_summary
 
     @property
     def last_response_content(self):

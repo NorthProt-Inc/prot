@@ -245,6 +245,57 @@ class TestToolDetection:
         assert client.get_tool_use_blocks() == []
 
 
+class TestCompactionDetection:
+    async def test_compaction_edit_includes_pause(self):
+        """Compaction edit should include pause_after_compaction when enabled."""
+        with patch("prot.llm.settings") as ms:
+            ms.thinking_keep_turns = 2
+            ms.tool_clear_trigger = 30000
+            ms.tool_clear_keep = 3
+            ms.compaction_trigger = 50000
+            ms.pause_after_compaction = True
+
+            from prot.llm import _build_context_management
+            cm = _build_context_management()
+            compact_edit = cm["edits"][2]
+            assert compact_edit["type"] == "compact_20260112"
+            assert compact_edit["pause"] is True
+
+    async def test_last_compaction_summary_initially_none(self):
+        client = LLMClient.__new__(LLMClient)
+        client._last_compaction_summary = None
+        assert client.last_compaction_summary is None
+
+    async def test_stop_reason_compaction_detected(self):
+        """When stop_reason is 'compaction', last_compaction_summary should be populated."""
+        mock_stream = AsyncMock()
+        mock_stream.__aenter__ = AsyncMock(return_value=mock_stream)
+        mock_stream.__aexit__ = AsyncMock(return_value=False)
+        mock_stream.__aiter__ = lambda self: self
+        mock_stream.__anext__ = AsyncMock(side_effect=StopAsyncIteration)
+
+        # Simulate compaction stop reason with compaction content block
+        compaction_block = MagicMock()
+        compaction_block.type = "compaction"
+        compaction_block.summary = "User discussed Python debugging techniques."
+        final_msg = MagicMock()
+        final_msg.content = [compaction_block]
+        final_msg.stop_reason = "compaction"
+        final_msg.usage = MagicMock()
+        mock_stream.get_final_message = AsyncMock(return_value=final_msg)
+
+        with patch("prot.llm.AsyncAnthropic") as mock_cls:
+            mock_client = MagicMock()
+            mock_cls.return_value = mock_client
+            mock_client.beta.messages.stream.return_value = mock_stream
+
+            client = LLMClient(api_key="test")
+            async for _ in client.stream_response([], None, []):
+                pass
+
+            assert client.last_compaction_summary == "User discussed Python debugging techniques."
+
+
 class TestStreamResponseResetContent:
     """stream_response resets _last_response_content before streaming."""
 
