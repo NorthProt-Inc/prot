@@ -13,45 +13,32 @@ async def _close_voyage_client(client) -> None:
 
 
 class AsyncVoyageEmbedder:
-    """Async embedding client using Voyage AI."""
+    """Async embedding client using Voyage AI voyage-4-large."""
 
-    def __init__(
-        self,
-        api_key: str | None = None,
-    ):
+    def __init__(self, api_key: str | None = None):
         self._client = voyageai.AsyncClient(
             api_key=api_key or settings.voyage_api_key,
         )
 
     async def close(self) -> None:
-        """Close the underlying HTTP client."""
         await _close_voyage_client(self._client)
 
     @logged(slow_ms=1000)
-    async def embed_query_contextual(self, text: str) -> list[float]:
-        """Embed single query using voyage-context-3 (input_type='query')."""
-        result = await self._client.contextualized_embed(
-            inputs=[[text]],
+    async def embed_query(self, text: str) -> list[float]:
+        """Embed single query text (input_type='query')."""
+        result = await self._client.embed(
+            texts=[text],
             model=settings.voyage_model,
             input_type="query",
         )
-        return result.results[0].embeddings[0]
+        return result.embeddings[0]
 
     @logged(slow_ms=2000)
-    async def embed_chunks_contextual(self, chunks: list[str]) -> list[list[float]]:
-        """Embed chunks using voyage-context-3. All chunks treated as one document's segments."""
-        result = await self._client.contextualized_embed(
-            inputs=[chunks],  # single document, multiple chunks
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed multiple texts independently (input_type='document')."""
+        result = await self._client.embed(
+            texts=texts,
             model=settings.voyage_model,
             input_type="document",
         )
-        return result.results[0].embeddings
-
-    async def embed_texts_contextual(self, texts: list[str]) -> list[list[float]]:
-        """Embed independent texts using voyage-context-3. Each text is its own document."""
-        result = await self._client.contextualized_embed(
-            inputs=[[text] for text in texts],
-            model=settings.voyage_model,
-            input_type="document",
-        )
-        return [r.embeddings[0] for r in result.results]
+        return result.embeddings
