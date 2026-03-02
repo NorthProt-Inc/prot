@@ -8,10 +8,9 @@ Real-time voice conversation system with the Axel persona — a streaming audio 
 
 - **Streaming voice pipeline** — VAD → STT → LLM → TTS with producer-consumer audio queue
 - **State machine conversation flow** — 6-state FSM (IDLE, LISTENING, PROCESSING, SPEAKING, ACTIVE, INTERRUPTED) with barge-in support
-- **GraphRAG long-term memory** — Entity/relationship extraction with contextual embeddings, stored in PostgreSQL + pgvector with HNSW indexes
-- **Community detection** — Louvain clustering on entity graph with auto-summarization, triggered every N extractions
+- **4-layer long-term memory** — Semantic, episodic, emotional, and procedural memory with entity/relationship extraction, stored in PostgreSQL + pgvector with HNSW indexes
 - **Prompt caching** — 3-block system prompt layout (persona, RAG context, dynamic) optimized for Anthropic cache hits
-- **Token-budget context management** — Dynamic conversation trimming via token counting (replaces fixed turn window)
+- **Server-side compaction** — Anthropic context management API handles thinking clearing, tool result clearing, and compaction automatically
 - **Home Assistant delegation** — Single `hass_request` tool delegates to HA conversation API agent
 - **Web search** — Built-in web search tool via Claude API
 - **Agentic tool loop** — Multi-iteration tool execution with up to 3 rounds per response
@@ -36,11 +35,9 @@ graph TD
     TOOLS --> WEB[Web Search]
     TOOLS -->|tool_result| LLM
 
-    LLM -->|background| MEM[Memory Extractor]
-    MEM --> EMB[Voyage AI<br/>voyage-context-3]
+    LLM -->|post-compaction| MEM[Memory Extractor]
+    MEM --> EMB[Voyage AI<br/>voyage-4-large]
     EMB --> DB[(PostgreSQL<br/>pgvector)]
-    MEM -->|every 5 extractions| COMM[Community Detector<br/>Louvain]
-    COMM --> EMB
     DB --> RERANK[Reranker<br/>rerank-2.5] -->|RAG context| CTX[Context Manager]
     CTX -->|system blocks| LLM
 ```
@@ -140,18 +137,16 @@ systemctl --user enable --now prot
 | `ELEVENLABS_VOICE_ID` | No | `s3lKyrFAzTUpzy3ZLwbM` | ElevenLabs voice ID |
 | `ELEVENLABS_MODEL` | No | `eleven_v3` | ElevenLabs TTS model |
 | `ELEVENLABS_OUTPUT_FORMAT` | No | `pcm_24000` | TTS output audio format |
-| `VOYAGE_API_KEY` | No | — | Voyage AI API key for contextual embeddings |
-| `VOYAGE_CONTEXT_MODEL` | No | `voyage-context-3` | Voyage contextual embedding model |
+| `VOYAGE_API_KEY` | No | — | Voyage AI API key for embeddings |
+| `VOYAGE_MODEL` | No | `voyage-4-large` | Voyage embedding model |
 | `RERANK_MODEL` | No | `rerank-2.5` | Voyage reranker model |
 | `RERANK_TOP_K` | No | `5` | Reranker top-K results |
 | `MEMORY_EXTRACTION_MODEL` | No | `claude-haiku-4-5-20251001` | Model for memory extraction |
-| `MEMORY_EXTRACTION_INTERVAL` | No | `3` | Extract every Nth exchange |
 | `RAG_CONTEXT_TARGET_TOKENS` | No | `4096` | RAG context target token budget |
 | `RAG_TOP_K` | No | `10` | RAG retrieval top-K candidates |
 | `DATABASE_URL` | No | `postgresql://prot:prot@localhost:5432/prot` | PostgreSQL connection string |
 | `DB_POOL_MIN` | No | `2` | DB connection pool min size |
 | `DB_POOL_MAX` | No | `10` | DB connection pool max size |
-| `DB_EXPORT_DIR` | No | `data/db` | CSV export directory on shutdown |
 | `HASS_URL` | No | `http://localhost:8123` | Home Assistant URL |
 | `HASS_TOKEN` | No | — | Home Assistant long-lived access token |
 | `HASS_AGENT_ID` | No | `conversation.google_ai_conversation` | HA conversation agent entity ID |
@@ -159,8 +154,6 @@ systemctl --user enable --now prot
 | `CLAUDE_MODEL` | No | `claude-sonnet-4-6` | Claude model ID |
 | `CLAUDE_MAX_TOKENS` | No | `4096` | Claude max output tokens |
 | `CLAUDE_EFFORT` | No | `high` | Claude thinking effort (low/medium/high) |
-| `CONTEXT_TOKEN_BUDGET` | No | `30000` | Max input tokens for conversation context |
-| `CONTEXT_TOOL_RESULT_MAX_CHARS` | No | `2000` | Max chars per tool_result before truncation |
 | `BARGE_IN_ENABLED` | No | `false` | Enable barge-in (interrupt while speaking) |
 | `VAD_THRESHOLD` | No | `0.5` | VAD speech detection threshold |
 | `VAD_THRESHOLD_SPEAKING` | No | `0.8` | VAD threshold during SPEAKING (barge-in) |
@@ -171,8 +164,9 @@ systemctl --user enable --now prot
 | `STT_SILENCE_THRESHOLD_SECS` | No | `3.0` | STT silence timeout (seconds) |
 | `TTS_SENTENCE_SILENCE_MS` | No | `200` | Silence between TTS sentences (ms) |
 | `ACTIVE_TIMEOUT` | No | `30` | Seconds before ACTIVE → IDLE timeout |
-| `COMMUNITY_REBUILD_INTERVAL` | No | `5` | Extractions between community rebuilds |
-| `COMMUNITY_MIN_ENTITIES` | No | `5` | Minimum entities before community detection runs |
+| `PAUSE_AFTER_COMPACTION` | No | `true` | Pause pipeline after server-side compaction |
+| `DECAY_BASE_RATE` | No | `0.002` | Memory decay base rate |
+| `DECAY_MIN_RETENTION` | No | `0.1` | Minimum memory retention score |
 | `LOG_LEVEL` | No | `INFO` | Logging level |
 
 ---
