@@ -1,17 +1,6 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Drop old schema (fresh start per design doc)
-DROP TABLE IF EXISTS community_members CASCADE;
-DROP TABLE IF EXISTS communities CASCADE;
-DROP TABLE IF EXISTS relationships CASCADE;
-DROP TABLE IF EXISTS entities CASCADE;
-DROP TABLE IF EXISTS conversation_messages CASCADE;
-DROP TABLE IF EXISTS semantic_memories CASCADE;
-DROP TABLE IF EXISTS episodic_memories CASCADE;
-DROP TABLE IF EXISTS emotional_memories CASCADE;
-DROP TABLE IF EXISTS procedural_memories CASCADE;
-
 -- Layer 1: Semantic Memory (facts, knowledge, preferences)
 CREATE TABLE IF NOT EXISTS semantic_memories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
