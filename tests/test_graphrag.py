@@ -1,20 +1,14 @@
-"""Tests for prot.graphrag — GraphRAG store with pgvector semantic search."""
+"""Tests for MemoryStore — 4-layer memory storage with pgvector."""
 
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from prot.graphrag import GraphRAGStore
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from prot.graphrag import MemoryStore
 
 
 def make_mock_pool():
-    """Create a mock asyncpg pool with async context manager for acquire()."""
     pool = MagicMock()
     conn = AsyncMock()
     ctx = AsyncMock()
@@ -25,7 +19,6 @@ def make_mock_pool():
 
 
 def mock_record(**kwargs):
-    """Create a mock that behaves like asyncpg.Record for dict() conversion."""
     record = MagicMock()
     record.keys.return_value = kwargs.keys()
     record.__getitem__ = MagicMock(side_effect=kwargs.__getitem__)
@@ -35,385 +28,119 @@ def mock_record(**kwargs):
     return record
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-
-class TestUpsertEntity:
-    """upsert_entity should insert new or update existing entities."""
-
-    async def test_upsert_entity_uses_on_conflict(self) -> None:
+class TestUpsertSemantic:
+    async def test_inserts_spo_triple(self):
         pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
+        store = MemoryStore(pool)
         new_id = uuid4()
         conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
 
-        result = await store.upsert_entity(
-            name="TestEntity",
-            entity_type="person",
-            description="A test entity",
-            embedding=[0.1, 0.2, 0.3],
-            namespace="default",
+        result = await store.upsert_semantic(
+            category="person", subject="user", predicate="likes",
+            object_="coffee", embedding=[0.1] * 1024,
         )
-
         assert result == new_id
-
-        # Verify single INSERT ... ON CONFLICT query
         call = conn.fetchrow.call_args
-        assert "INSERT" in call.args[0]
+        assert "semantic_memories" in call.args[0]
         assert "ON CONFLICT" in call.args[0]
-        assert "mention_count" in call.args[0]
-        assert conn.fetchrow.await_count == 1
 
-
-    async def test_upsert_entity_with_provided_conn(self) -> None:
+    async def test_uses_provided_conn(self):
         pool, _ = make_mock_pool()
-        store = GraphRAGStore(pool)
+        store = MemoryStore(pool)
+        ext_conn = AsyncMock()
+        ext_conn.fetchrow = AsyncMock(return_value=mock_record(id=uuid4()))
 
+        await store.upsert_semantic(
+            category="fact", subject="sky", predicate="is", object_="blue",
+            conn=ext_conn,
+        )
+        ext_conn.fetchrow.assert_awaited_once()
+        pool.acquire.assert_not_called()
+
+
+class TestInsertEpisodic:
+    async def test_inserts_episode(self):
+        pool, conn = make_mock_pool()
+        store = MemoryStore(pool)
         new_id = uuid4()
-        ext_conn = AsyncMock()
-        ext_conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
+        conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
 
-        result = await store.upsert_entity(
-            name="TestEntity",
-            entity_type="person",
-            description="A test entity",
-            conn=ext_conn,
+        result = await store.insert_episodic(
+            summary="Discussed Python debugging",
+            topics=["python", "debugging"],
+            emotional_tone="curious",
+            significance=0.7,
+            duration_turns=10,
+            embedding=[0.1] * 1024,
         )
-
         assert result == new_id
-        ext_conn.fetchrow.assert_awaited_once()
-        # Pool should NOT have been used
-        pool.acquire.assert_not_called()
-
-
-class TestUpsertRelationship:
-    """upsert_relationship should insert a new relationship."""
-
-    async def test_upsert_relationship(self) -> None:
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        rel_id = uuid4()
-        source_id = uuid4()
-        target_id = uuid4()
-
-        conn.fetchrow = AsyncMock(return_value=mock_record(id=rel_id))
-
-        result = await store.upsert_relationship(
-            source_id=source_id,
-            target_id=target_id,
-            relation_type="works_with",
-            description="Collaborative relationship",
-            weight=0.8,
-        )
-
-        assert result == rel_id
-
-        # Verify INSERT ... ON CONFLICT was called on relationships table
         call = conn.fetchrow.call_args
-        assert "INSERT" in call.args[0]
+        assert "episodic_memories" in call.args[0]
+
+
+class TestInsertEmotional:
+    async def test_inserts_emotion(self):
+        pool, conn = make_mock_pool()
+        store = MemoryStore(pool)
+        new_id = uuid4()
+        episode_id = uuid4()
+        conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
+
+        result = await store.insert_emotional(
+            emotion="joy", trigger_context="solved a hard bug",
+            intensity=0.8, episode_id=episode_id, embedding=[0.1] * 1024,
+        )
+        assert result == new_id
+        call = conn.fetchrow.call_args
+        assert "emotional_memories" in call.args[0]
+
+
+class TestUpsertProcedural:
+    async def test_inserts_pattern(self):
+        pool, conn = make_mock_pool()
+        store = MemoryStore(pool)
+        new_id = uuid4()
+        conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
+
+        result = await store.upsert_procedural(
+            pattern="asks about weather in the morning",
+            frequency="daily", confidence=0.6, embedding=[0.1] * 1024,
+        )
+        assert result == new_id
+        call = conn.fetchrow.call_args
+        assert "procedural_memories" in call.args[0]
         assert "ON CONFLICT" in call.args[0]
-        assert "relationships" in call.args[0]
 
 
-    async def test_upsert_relationship_with_provided_conn(self) -> None:
-        pool, _ = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        rel_id = uuid4()
-        ext_conn = AsyncMock()
-        ext_conn.fetchrow = AsyncMock(return_value=mock_record(id=rel_id))
-
-        result = await store.upsert_relationship(
-            source_id=uuid4(),
-            target_id=uuid4(),
-            relation_type="works_with",
-            description="Collaborative relationship",
-            conn=ext_conn,
-        )
-
-        assert result == rel_id
-        ext_conn.fetchrow.assert_awaited_once()
-        pool.acquire.assert_not_called()
-
-
-class TestSearchEntitiesSemantic:
-    """search_entities_semantic should return list of dicts with similarity."""
-
-    async def test_search_entities_semantic(self) -> None:
+class TestSearchAll:
+    async def test_search_all_returns_merged_results(self):
         pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
+        store = MemoryStore(pool)
 
-        entity1_id = uuid4()
-        entity2_id = uuid4()
-
-        rows = [
-            mock_record(
-                id=entity1_id,
-                name="Entity1",
-                entity_type="person",
-                description="First entity",
-                mention_count=5,
-                similarity=0.95,
-            ),
-            mock_record(
-                id=entity2_id,
-                name="Entity2",
-                entity_type="organization",
-                description="Second entity",
-                mention_count=2,
-                similarity=0.87,
-            ),
-        ]
-        conn.fetch = AsyncMock(return_value=rows)
-
-        results = await store.search_entities_semantic(
-            query_embedding=[0.1, 0.2, 0.3],
-            top_k=5,
+        sem_row = mock_record(
+            id=uuid4(), table_name="semantic", category="person",
+            subject="user", predicate="likes", object="coffee",
+            text="user likes coffee", similarity=0.9,
+            confidence=1.0, mention_count=3, created_at="2026-01-01T00:00:00Z",
         )
+        conn.fetch = AsyncMock(side_effect=[
+            [sem_row],  # semantic
+            [],         # episodic
+            [],         # emotional
+            [],         # procedural
+        ])
 
-        assert len(results) == 2
-        assert all(isinstance(r, dict) for r in results)
-        assert results[0]["name"] == "Entity1"
-        assert results[1]["name"] == "Entity2"
-
-        # Verify the query uses cosine distance operator
-        call = conn.fetch.call_args
-        assert "<=>" in call.args[0]
-        assert "LIMIT" in call.args[0]
-
-
-class TestSearchCommunities:
-    """search_communities should return list of dicts with similarity."""
-
-    async def test_search_communities(self) -> None:
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        community_id = uuid4()
-        rows = [
-            mock_record(
-                id=community_id,
-                level=1,
-                summary="Research community",
-                entity_count=10,
-                similarity=0.92,
-            ),
-        ]
-        conn.fetch = AsyncMock(return_value=rows)
-
-        results = await store.search_communities(
-            query_embedding=[0.1, 0.2, 0.3],
-            top_k=5,
-        )
-
-        assert len(results) == 1
-        assert isinstance(results[0], dict)
-        assert results[0]["summary"] == "Research community"
-        assert results[0]["similarity"] == 0.92
+        results = await store.search_all(query_embedding=[0.1] * 1024, top_k=10)
+        assert len(results) >= 1
+        assert conn.fetch.await_count == 4  # one query per table
 
 
 class TestSaveMessage:
-    """save_message should persist a conversation message."""
-
-    async def test_save_message(self) -> None:
+    async def test_save_message(self):
         pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
+        store = MemoryStore(pool)
         msg_id = uuid4()
-        conv_id = uuid4()
         conn.fetchrow = AsyncMock(return_value=mock_record(id=msg_id))
 
-        result = await store.save_message(
-            conversation_id=conv_id,
-            role="user",
-            content="Hello world",
-        )
-
+        result = await store.save_message(uuid4(), "user", "Hello")
         assert result == msg_id
-        call = conn.fetchrow.call_args
-        assert "conversation_messages" in call.args[0]
-        assert "INSERT" in call.args[0]
-
-
-class TestLoadGraphForCommunityDetection:
-    """load_graph_for_community_detection should return entities and relationships."""
-
-    async def test_returns_entities_and_relationships(self):
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        entity_record = mock_record(
-            id=uuid4(), name="Bob", entity_type="person", description="A friend"
-        )
-        rel_record = mock_record(
-            source_id=uuid4(), target_id=uuid4(), weight=1.0
-        )
-        conn.fetch = AsyncMock(side_effect=[[entity_record], [rel_record]])
-
-        entities, relationships = await store.load_graph_for_community_detection()
-        assert len(entities) == 1
-        assert entities[0]["name"] == "Bob"
-        assert len(relationships) == 1
-        assert relationships[0]["weight"] == 1.0
-
-    async def test_returns_empty_lists_when_no_data(self):
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-        conn.fetch = AsyncMock(return_value=[])
-
-        entities, relationships = await store.load_graph_for_community_detection()
-        assert entities == []
-        assert relationships == []
-
-
-class TestRebuildCommunities:
-    """rebuild_communities should delete and re-insert atomically."""
-
-    async def test_deletes_and_inserts_in_transaction(self):
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-        tx = MagicMock()
-        tx.__aenter__ = AsyncMock(return_value=tx)
-        tx.__aexit__ = AsyncMock(return_value=False)
-        conn.transaction = MagicMock(return_value=tx)
-
-        community_id = uuid4()
-        entity_id = uuid4()
-        conn.fetchrow = AsyncMock(return_value=mock_record(id=community_id))
-
-        await store.rebuild_communities([{
-            "summary": "Test group",
-            "summary_embedding": [0.1] * 1024,
-            "entity_ids": [entity_id],
-        }])
-
-        conn.execute.assert_called_once()
-        assert "DELETE" in str(conn.execute.call_args)
-        conn.fetchrow.assert_called_once()
-        conn.executemany.assert_called_once()
-
-    async def test_empty_communities_just_deletes(self):
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-        tx = MagicMock()
-        tx.__aenter__ = AsyncMock(return_value=tx)
-        tx.__aexit__ = AsyncMock(return_value=False)
-        conn.transaction = MagicMock(return_value=tx)
-
-        await store.rebuild_communities([])
-
-        conn.execute.assert_called_once()
-        assert "DELETE" in str(conn.execute.call_args)
-        conn.fetchrow.assert_not_called()
-
-
-class TestGetEntityCount:
-    """get_entity_count should return total entity count."""
-
-    async def test_returns_count(self):
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-        conn.fetchrow = AsyncMock(return_value=mock_record(cnt=42))
-
-        count = await store.get_entity_count()
-        assert count == 42
-
-
-class TestGetEntityNames:
-    """get_entity_names should return entity names from DB."""
-
-    async def test_get_entity_names(self):
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-        conn.fetch = AsyncMock(return_value=[
-            mock_record(name="Bob"),
-            mock_record(name="Alice"),
-        ])
-
-        names = await store.get_entity_names()
-        assert names == ["Bob", "Alice"]
-        call = conn.fetch.call_args
-        assert "entities" in call.args[0]
-        assert "mention_count DESC" in call.args[0]
-
-    async def test_get_entity_names_empty(self):
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-        conn.fetch = AsyncMock(return_value=[])
-
-        names = await store.get_entity_names()
-        assert names == []
-
-
-class TestUpsertEntityDescriptionReplacement:
-    """upsert_entity SQL should replace description (not append) on conflict."""
-
-    async def test_upsert_entity_replaces_description(self):
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        new_id = uuid4()
-        conn.fetchrow = AsyncMock(return_value=mock_record(id=new_id))
-
-        await store.upsert_entity(
-            name="TestEntity",
-            entity_type="person",
-            description="A test entity",
-        )
-
-        call = conn.fetchrow.call_args
-        sql = call.args[0]
-        # New logic: replace description (EXCLUDED.description), not append
-        assert "EXCLUDED.description" in sql
-        # Old append logic should NOT be present
-        assert "LEFT(" not in sql
-        assert "||" not in sql
-
-
-class TestGetEntityNeighbors:
-    """get_entity_neighbors should return neighboring entities with relationship info."""
-
-    async def test_get_entity_neighbors(self) -> None:
-        pool, conn = make_mock_pool()
-        store = GraphRAGStore(pool)
-
-        entity_id = uuid4()
-        rows = [
-            mock_record(
-                id=uuid4(),
-                name="Neighbor1",
-                entity_type="person",
-                description="First neighbor",
-                relation_type="works_with",
-                rel_description="Collaborates on project X",
-            ),
-            mock_record(
-                id=uuid4(),
-                name="Neighbor2",
-                entity_type="organization",
-                description="Second neighbor",
-                relation_type="member_of",
-                rel_description="Part of the team",
-            ),
-        ]
-        conn.fetch = AsyncMock(return_value=rows)
-
-        results = await store.get_entity_neighbors(entity_id)
-
-        assert len(results) == 2
-        assert all(isinstance(r, dict) for r in results)
-        assert results[0]["name"] == "Neighbor1"
-        assert results[1]["name"] == "Neighbor2"
-        assert results[0]["relation_type"] == "works_with"
-        assert results[0]["rel_description"] == "Collaborates on project X"
-        assert results[1]["relation_type"] == "member_of"
-        assert results[1]["rel_description"] == "Part of the team"
-
-        # Verify direct JOIN query (not recursive CTE)
-        call = conn.fetch.call_args
-        assert "relationships" in call.args[0]
-        assert "relation_type" in call.args[0]

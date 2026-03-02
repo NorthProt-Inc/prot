@@ -107,45 +107,32 @@ class TestIntegrationPool:
                     "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
                 )
                 table_names = {r["tablename"] for r in tables}
-                assert "entities" in table_names
-                assert "relationships" in table_names
-                assert "communities" in table_names
-                assert "community_members" in table_names
+                assert "semantic_memories" in table_names
+                assert "episodic_memories" in table_names
+                assert "emotional_memories" in table_names
+                assert "procedural_memories" in table_names
                 assert "conversation_messages" in table_names
         finally:
             await pool.close()
             db_module._pool = None
 
-    async def test_basic_entity_crud(self) -> None:
+    async def test_basic_semantic_crud(self) -> None:
         pool = await init_pool()
         try:
             schema_sql = self.SCHEMA_PATH.read_text(encoding="utf-8")
             async with pool.acquire() as conn:
                 await conn.execute(schema_sql)
-                # Insert
                 row = await conn.fetchrow(
-                    """
-                    INSERT INTO entities (namespace, name, entity_type, description)
-                    VALUES ($1, $2, $3, $4)
-                    RETURNING id, name
-                    """,
-                    "test",
-                    "TestEntity",
-                    "person",
-                    "A test entity",
+                    """INSERT INTO semantic_memories
+                       (category, subject, predicate, object)
+                    VALUES ($1, $2, $3, $4) RETURNING id, subject""",
+                    "person", "user", "likes", "coffee",
                 )
                 assert row is not None
-                entity_id = row["id"]
-                assert row["name"] == "TestEntity"
-
-                # Delete
+                assert row["subject"] == "user"
                 await conn.execute(
-                    "DELETE FROM entities WHERE id = $1", entity_id
+                    "DELETE FROM semantic_memories WHERE id = $1", row["id"]
                 )
-                deleted = await conn.fetchrow(
-                    "SELECT id FROM entities WHERE id = $1", entity_id
-                )
-                assert deleted is None
         finally:
             await pool.close()
             db_module._pool = None

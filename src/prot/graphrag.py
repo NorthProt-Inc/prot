@@ -1,4 +1,4 @@
-"""pgvector-backed GraphRAG storage for entity, relationship, and community management."""
+"""4-layer memory storage with pgvector semantic search."""
 
 from __future__ import annotations
 
@@ -11,205 +11,184 @@ import asyncpg
 from prot.logging import logged
 
 
-class GraphRAGStore:
-    """pgvector-backed GraphRAG storage."""
+class MemoryStore:
+    """pgvector-backed 4-layer memory storage."""
 
     def __init__(self, pool: asyncpg.Pool):
         self._pool = pool
 
     def acquire(self):
-        """Acquire a connection from the pool (async context manager)."""
         return self._pool.acquire()
 
     @asynccontextmanager
     async def _conn(
         self, conn: asyncpg.Connection | None = None,
     ) -> AsyncIterator[asyncpg.Connection]:
-        """Yield *conn* if provided, otherwise acquire one from the pool."""
         if conn is not None:
             yield conn
         else:
             async with self._pool.acquire() as c:
                 yield c
 
+    # -- Semantic memories (SPO triples) --
+
     @logged(slow_ms=500)
-    async def upsert_entity(
+    async def upsert_semantic(
         self,
-        name: str,
-        entity_type: str,
-        description: str,
+        category: str,
+        subject: str,
+        predicate: str,
+        object_: str,
+        confidence: float = 1.0,
         embedding: list[float] | None = None,
-        namespace: str = "default",
+        source: str = "compaction",
         conn: asyncpg.Connection | None = None,
     ) -> UUID:
-        """Insert or update entity. Increments mention_count on conflict."""
-        query = """INSERT INTO entities (namespace, name, entity_type, description, name_embedding)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (namespace, name)
-                DO UPDATE SET description = CASE
-                    WHEN EXCLUDED.description = '' THEN entities.description
-                    ELSE EXCLUDED.description
-                    END,
-                             mention_count = entities.mention_count + 1,
-                             name_embedding = COALESCE(EXCLUDED.name_embedding, entities.name_embedding),
+        query = """INSERT INTO semantic_memories
+                   (category, subject, predicate, object, confidence, source, embedding)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                ON CONFLICT (subject, predicate, object)
+                DO UPDATE SET mention_count = semantic_memories.mention_count + 1,
+                             confidence = GREATEST(semantic_memories.confidence, EXCLUDED.confidence),
+                             embedding = COALESCE(EXCLUDED.embedding, semantic_memories.embedding),
                              updated_at = now()
                 RETURNING id"""
         async with self._conn(conn) as c:
-            row = await c.fetchrow(query, namespace, name, entity_type, description, embedding)
+            row = await c.fetchrow(
+                query, category, subject, predicate, object_, confidence, source, embedding,
+            )
             return row["id"]
 
+    # -- Episodic memories --
+
     @logged(slow_ms=500)
-    async def upsert_relationship(
+    async def insert_episodic(
         self,
-        source_id: UUID,
-        target_id: UUID,
-        relation_type: str,
-        description: str,
-        weight: float = 1.0,
+        summary: str,
+        topics: list[str] | None = None,
+        emotional_tone: str | None = None,
+        significance: float = 0.5,
+        duration_turns: int = 0,
+        embedding: list[float] | None = None,
         conn: asyncpg.Connection | None = None,
     ) -> UUID:
-        """Insert or update a relationship between two entities."""
-        query = """INSERT INTO relationships (source_id, target_id, relation_type, description, weight)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT (source_id, target_id, relation_type)
-                DO UPDATE SET description = EXCLUDED.description,
-                             weight = EXCLUDED.weight,
+        query = """INSERT INTO episodic_memories
+                   (summary, topics, emotional_tone, significance, duration_turns, embedding)
+                VALUES ($1, $2, $3, $4, $5, $6) RETURNING id"""
+        async with self._conn(conn) as c:
+            row = await c.fetchrow(
+                query, summary, topics or [], emotional_tone,
+                significance, duration_turns, embedding,
+            )
+            return row["id"]
+
+    # -- Emotional memories --
+
+    @logged(slow_ms=500)
+    async def insert_emotional(
+        self,
+        emotion: str,
+        trigger_context: str,
+        intensity: float = 0.5,
+        episode_id: UUID | None = None,
+        embedding: list[float] | None = None,
+        conn: asyncpg.Connection | None = None,
+    ) -> UUID:
+        query = """INSERT INTO emotional_memories
+                   (emotion, trigger_context, intensity, episode_id, embedding)
+                VALUES ($1, $2, $3, $4, $5) RETURNING id"""
+        async with self._conn(conn) as c:
+            row = await c.fetchrow(
+                query, emotion, trigger_context, intensity, episode_id, embedding,
+            )
+            return row["id"]
+
+    # -- Procedural memories --
+
+    @logged(slow_ms=500)
+    async def upsert_procedural(
+        self,
+        pattern: str,
+        frequency: str | None = None,
+        confidence: float = 0.5,
+        embedding: list[float] | None = None,
+        conn: asyncpg.Connection | None = None,
+    ) -> UUID:
+        query = """INSERT INTO procedural_memories
+                   (pattern, frequency, confidence, embedding, last_observed)
+                VALUES ($1, $2, $3, $4, now())
+                ON CONFLICT (pattern)
+                DO UPDATE SET observation_count = procedural_memories.observation_count + 1,
+                             confidence = GREATEST(procedural_memories.confidence, EXCLUDED.confidence),
+                             frequency = COALESCE(EXCLUDED.frequency, procedural_memories.frequency),
+                             embedding = COALESCE(EXCLUDED.embedding, procedural_memories.embedding),
+                             last_observed = now(),
                              updated_at = now()
                 RETURNING id"""
         async with self._conn(conn) as c:
-            row = await c.fetchrow(query, source_id, target_id, relation_type, description, weight)
+            row = await c.fetchrow(query, pattern, frequency, confidence, embedding)
             return row["id"]
 
-    async def get_entity_id_by_name(
-        self, name: str, namespace: str = "default",
-        conn: asyncpg.Connection | None = None,
-    ) -> UUID | None:
-        """Look up entity ID by name. Returns None if not found."""
-        query = "SELECT id FROM entities WHERE namespace = $1 AND name = $2"
-        async with self._conn(conn) as c:
-            row = await c.fetchrow(query, namespace, name)
-        return row["id"] if row else None
-
-    async def get_entity_names(self, namespace: str = "default") -> list[str]:
-        """Return all entity names ordered by mention count."""
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT name FROM entities WHERE namespace = $1 ORDER BY mention_count DESC",
-                namespace,
-            )
-            return [r["name"] for r in rows]
+    # -- Search across all layers --
 
     @logged(slow_ms=500)
-    async def search_entities_semantic(
-        self, query_embedding: list[float], top_k: int = 10
+    async def search_all(
+        self, query_embedding: list[float], top_k: int = 10,
     ) -> list[dict]:
-        """Search entities by semantic similarity using pgvector cosine distance."""
+        """Search all 4 memory tables by cosine similarity. Returns merged list."""
         async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                """SELECT id, name, entity_type, description, mention_count,
-                          1 - (name_embedding <=> $1::vector) AS similarity
-                FROM entities WHERE name_embedding IS NOT NULL
-                ORDER BY name_embedding <=> $1::vector LIMIT $2""",
-                query_embedding,
-                top_k,
+            sem = await conn.fetch(
+                """SELECT id, 'semantic' AS table_name, category,
+                          subject, predicate, object,
+                          subject || ' ' || predicate || ' ' || object AS text,
+                          confidence, mention_count,
+                          1 - (embedding <=> $1::vector) AS similarity,
+                          created_at
+                FROM semantic_memories WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> $1::vector LIMIT $2""",
+                query_embedding, top_k,
             )
-            return [dict(r) for r in rows]
+            epi = await conn.fetch(
+                """SELECT id, 'episodic' AS table_name, summary AS text,
+                          topics, emotional_tone, significance,
+                          1 - (embedding <=> $1::vector) AS similarity,
+                          created_at
+                FROM episodic_memories WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> $1::vector LIMIT $2""",
+                query_embedding, top_k,
+            )
+            emo = await conn.fetch(
+                """SELECT id, 'emotional' AS table_name,
+                          emotion || ': ' || trigger_context AS text,
+                          emotion, trigger_context, intensity,
+                          1 - (embedding <=> $1::vector) AS similarity,
+                          created_at
+                FROM emotional_memories WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> $1::vector LIMIT $2""",
+                query_embedding, top_k,
+            )
+            proc = await conn.fetch(
+                """SELECT id, 'procedural' AS table_name, pattern AS text,
+                          frequency, confidence, observation_count,
+                          1 - (embedding <=> $1::vector) AS similarity,
+                          created_at
+                FROM procedural_memories WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> $1::vector LIMIT $2""",
+                query_embedding, top_k,
+            )
 
-    @logged(slow_ms=500)
-    async def search_communities(
-        self, query_embedding: list[float], top_k: int = 10
-    ) -> list[dict]:
-        """Search communities by semantic similarity using pgvector cosine distance."""
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                """SELECT id, level, summary, entity_count,
-                          1 - (summary_embedding <=> $1::vector) AS similarity
-                FROM communities WHERE summary_embedding IS NOT NULL
-                ORDER BY summary_embedding <=> $1::vector LIMIT $2""",
-                query_embedding,
-                top_k,
-            )
-            return [dict(r) for r in rows]
+        return [dict(r) for r in [*sem, *epi, *emo, *proc]]
+
+    # -- Conversation messages (unchanged) --
 
     async def save_message(
-        self,
-        conversation_id: UUID,
-        role: str,
-        content: str,
+        self, conversation_id: UUID, role: str, content: str,
     ) -> UUID:
-        """Persist a conversation message to the database."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 """INSERT INTO conversation_messages
                    (conversation_id, role, content)
                    VALUES ($1, $2, $3) RETURNING id""",
-                conversation_id,
-                role,
-                content,
+                conversation_id, role, content,
             )
             return row["id"]
-
-    async def load_graph_for_community_detection(
-        self,
-    ) -> tuple[list[dict], list[dict]]:
-        """Load all entities and relationships for community detection."""
-        async with self._pool.acquire() as conn:
-            entity_rows = await conn.fetch(
-                "SELECT id, name, entity_type, description FROM entities"
-            )
-            rel_rows = await conn.fetch(
-                "SELECT source_id, target_id, weight FROM relationships"
-            )
-            return [dict(r) for r in entity_rows], [dict(r) for r in rel_rows]
-
-    @logged(slow_ms=3000)
-    async def rebuild_communities(self, communities: list[dict]) -> None:
-        """Clear all communities and insert new ones atomically.
-
-        Each community dict: {summary, summary_embedding, entity_ids}
-        """
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute("DELETE FROM communities")
-                for comm in communities:
-                    row = await conn.fetchrow(
-                        """INSERT INTO communities (level, summary, summary_embedding, entity_count)
-                        VALUES (0, $1, $2, $3) RETURNING id""",
-                        comm["summary"],
-                        comm["summary_embedding"],
-                        len(comm["entity_ids"]),
-                    )
-                    if comm["entity_ids"]:
-                        await conn.executemany(
-                            """INSERT INTO community_members (community_id, entity_id)
-                            VALUES ($1, $2) ON CONFLICT DO NOTHING""",
-                            [(row["id"], eid) for eid in comm["entity_ids"]],
-                        )
-
-    async def get_entity_count(self) -> int:
-        """Return total number of entities."""
-        async with self._pool.acquire() as conn:
-            row = await conn.fetchrow("SELECT count(*) AS cnt FROM entities")
-            return row["cnt"]
-
-    async def get_entity_neighbors(
-        self, entity_id: UUID,
-    ) -> list[dict]:
-        """Get neighboring entities with relationship info (depth-1 only)."""
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT e.id, e.name, e.entity_type, e.description,
-                       r.relation_type, r.description AS rel_description
-                FROM relationships r
-                JOIN entities e ON e.id = CASE
-                    WHEN r.source_id = $1 THEN r.target_id
-                    ELSE r.source_id
-                END
-                WHERE (r.source_id = $1 OR r.target_id = $1)
-                  AND e.id != $1
-                ORDER BY r.weight DESC
-                """,
-                entity_id,
-            )
-            return [dict(r) for r in rows]
