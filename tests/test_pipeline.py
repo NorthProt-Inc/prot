@@ -60,9 +60,6 @@ def _make_pipeline():
     p._ctx.build_tools = MagicMock(return_value=[])
     p._ctx.update_rag_context = MagicMock()
 
-    # Conversation logger
-    p._conv_logger = MagicMock()
-
     # Optional components (may not be available)
     p._memory = None
     p._graphrag = None
@@ -83,7 +80,6 @@ def _make_pipeline():
     p._speaking_since = 0.0
     p._barge_in_grace = 1.5
     p._background_tasks = set()
-    p._session_msg_offset = 0
     p._exchange_count = 0
     p._consecutive_errors = 0
     p._error_backoff = 0.0
@@ -309,8 +305,7 @@ class TestShutdown:
         mock_pool = AsyncMock()
         p._pool = mock_pool
 
-        with patch("prot.db.export_tables", new_callable=AsyncMock):
-            await p.shutdown()
+        await p.shutdown()
         mock_pool.close.assert_awaited_once()
 
     async def test_closes_tts_client(self):
@@ -640,10 +635,7 @@ class TestExtractMemoriesBg:
         mock_memory.save_extraction = AsyncMock()
         p._memory = mock_memory
 
-        # Extraction fires on interval (default 3) — call enough times
-        with patch("prot.pipeline.settings") as ms:
-            ms.memory_extraction_interval = 1  # fire every time for this test
-            p._extract_memories_bg()
+        p._extract_memories_bg()
         assert len(p._background_tasks) == 1
         await asyncio.sleep(0.05)
         assert len(p._background_tasks) == 0
@@ -662,9 +654,7 @@ class TestExtractMemoriesBg:
         mock_memory.save_extraction = AsyncMock()
         p._memory = mock_memory
 
-        with patch("prot.pipeline.settings") as ms:
-            ms.memory_extraction_interval = 1
-            p._extract_memories_bg()
+        p._extract_memories_bg()
         assert len(p._background_tasks) == 1
 
         await p.shutdown()
@@ -690,79 +680,6 @@ class TestSaveMessageBg:
         p._graphrag = None
         p._save_message_bg("user", "test")
         assert len(p._background_tasks) == 0
-
-
-class TestSaveSessionLog:
-    """_save_session_log() — saves conversation as JSON and resets session."""
-
-    async def test_save_session_log_calls_logger(self):
-        p = _make_pipeline()
-        p._conv_logger = MagicMock()
-        p._ctx.get_messages.return_value = [
-            {"role": "user", "content": "hello"},
-        ]
-        old_id = p._conversation_id
-        p._save_session_log()
-
-        p._conv_logger.save_session.assert_called_once_with(
-            old_id,
-            [{"role": "user", "content": "hello"}],
-        )
-        # Session ID should be reset
-        assert p._conversation_id != old_id
-
-    async def test_save_session_log_skips_empty(self):
-        p = _make_pipeline()
-        p._conv_logger = MagicMock()
-        p._ctx.get_messages.return_value = []
-        p._save_session_log()
-
-        p._conv_logger.save_session.assert_not_called()
-
-    async def test_save_session_log_only_saves_new_messages(self):
-        p = _make_pipeline()
-        p._ctx.get_messages.return_value = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-        ]
-        p._save_session_log()
-        first_call_msgs = p._conv_logger.save_session.call_args_list[0][0][1]
-        assert len(first_call_msgs) == 2
-
-        p._ctx.get_messages.return_value = [
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-            {"role": "user", "content": "weather?"},
-            {"role": "assistant", "content": "sunny"},
-        ]
-        p._save_session_log()
-        second_call_msgs = p._conv_logger.save_session.call_args_list[1][0][1]
-        assert len(second_call_msgs) == 2
-        assert second_call_msgs[0]["content"] == "weather?"
-
-    async def test_save_session_log_skips_if_no_new_messages(self):
-        p = _make_pipeline()
-        p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
-        p._save_session_log()
-        assert p._conv_logger.save_session.call_count == 1
-        p._save_session_log()
-        assert p._conv_logger.save_session.call_count == 1
-
-
-class TestShutdownSessionSave:
-    """shutdown() — saves session log before cleanup."""
-
-    async def test_shutdown_saves_session_log(self):
-        p = _make_pipeline()
-        p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
-        await p.shutdown()
-        p._conv_logger.save_session.assert_called_once()
-
-    async def test_shutdown_skips_session_log_if_empty(self):
-        p = _make_pipeline()
-        p._ctx.get_messages.return_value = []
-        await p.shutdown()
-        p._conv_logger.save_session.assert_not_called()
 
 
 class TestToolUseHandling:
@@ -1239,47 +1156,6 @@ class TestPipelineHassRouting:
             await p._process_response()
 
         p._ctx.build_tools.assert_called_with(hass_agent=mock_agent)
-
-
-class TestExtractionInterval:
-    """_extract_memories_bg() — extraction interval gating."""
-
-    async def test_extraction_skipped_when_interval_not_met(self):
-        """Extraction should not fire until the interval is met."""
-        p = _make_pipeline()
-        mock_memory = AsyncMock()
-        mock_memory.extract_incremental = AsyncMock(
-            return_value={"entities": [], "relationships": []}
-        )
-        mock_memory.save_extraction = AsyncMock()
-        p._memory = mock_memory
-
-        with patch("prot.pipeline.settings") as ms:
-            ms.memory_extraction_interval = 3
-            # Call 1 and 2: should not fire
-            p._extract_memories_bg()
-            p._extract_memories_bg()
-        assert len(p._background_tasks) == 0
-
-    async def test_extraction_fires_on_interval(self):
-        """Extraction should fire on every Nth call."""
-        p = _make_pipeline()
-        mock_memory = AsyncMock()
-        mock_memory.extract_incremental = AsyncMock(
-            return_value={"entities": [], "relationships": []}
-        )
-        mock_memory.save_extraction = AsyncMock()
-        p._memory = mock_memory
-
-        with patch("prot.pipeline.settings") as ms:
-            ms.memory_extraction_interval = 3
-            # Calls 1, 2: skip; Call 3: fire
-            p._extract_memories_bg()
-            p._extract_memories_bg()
-            p._extract_memories_bg()
-        assert len(p._background_tasks) == 1
-        await asyncio.sleep(0.05)
-        assert len(p._background_tasks) == 0
 
 
 class TestShutdownFinalExtraction:

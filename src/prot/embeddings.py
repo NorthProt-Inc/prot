@@ -32,7 +32,7 @@ class AsyncVoyageEmbedder:
         """Embed single query using voyage-context-3 (input_type='query')."""
         result = await self._client.contextualized_embed(
             inputs=[[text]],
-            model=settings.voyage_context_model,
+            model=settings.voyage_model,
             input_type="query",
         )
         return result.results[0].embeddings[0]
@@ -42,7 +42,7 @@ class AsyncVoyageEmbedder:
         """Embed chunks using voyage-context-3. All chunks treated as one document's segments."""
         result = await self._client.contextualized_embed(
             inputs=[chunks],  # single document, multiple chunks
-            model=settings.voyage_context_model,
+            model=settings.voyage_model,
             input_type="document",
         )
         return result.results[0].embeddings
@@ -51,7 +51,7 @@ class AsyncVoyageEmbedder:
         """Embed independent texts using voyage-context-3. Each text is its own document."""
         result = await self._client.contextualized_embed(
             inputs=[[text] for text in texts],
-            model=settings.voyage_context_model,
+            model=settings.voyage_model,
             input_type="document",
         )
         return [r.embeddings[0] for r in result.results]

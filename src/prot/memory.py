@@ -93,23 +93,18 @@ class MemoryExtractor:
         anthropic_key: str | None = None,
         store: GraphRAGStore | None = None,
         embedder: AsyncVoyageEmbedder | None = None,
-        community_detector=None,
         reranker=None,
     ):
         self._llm = AsyncAnthropic(api_key=anthropic_key or settings.anthropic_api_key)
         self._store = store
         self._embedder = embedder
-        self._community_detector = community_detector
         self._reranker = reranker
-        self._extraction_count: int = 0
         self._last_extracted_index: int = 0
         self._known_entities: set[str] = set()
 
     async def close(self) -> None:
         """Close the underlying Anthropic client."""
         await self._llm.close()
-        if self._community_detector:
-            await self._community_detector.close()
         if self._reranker:
             await self._reranker.close()
 
@@ -195,13 +190,6 @@ class MemoryExtractor:
                         )
         logger.info("Saved", entities=len(entities), rels=len(relationships))
 
-        self._extraction_count += 1
-        if (
-            self._community_detector
-            and self._extraction_count % settings.community_rebuild_interval == 0
-        ):
-            await self._maybe_rebuild_communities()
-
     async def _rerank_if_available(
         self, query: str, items: list[dict], text_key: str,
     ) -> list[dict]:
@@ -212,14 +200,6 @@ class MemoryExtractor:
                 top_k=settings.rerank_top_k,
             )
         return items
-
-    async def _maybe_rebuild_communities(self) -> None:
-        """Trigger community detection rebuild."""
-        try:
-            count = await self._community_detector.rebuild()
-            logger.info("Community rebuild complete", communities=count)
-        except Exception:
-            logger.warning("Community rebuild failed", exc_info=True)
 
     async def extract_incremental(self, all_messages: list[dict]) -> dict:
         """Extract from all unprocessed messages since last extraction."""

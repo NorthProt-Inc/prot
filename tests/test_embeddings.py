@@ -20,7 +20,7 @@ class TestAsyncVoyageEmbedder:
             assert len(vectors[0]) == 1024
             mock_client.contextualized_embed.assert_called_once_with(
                 inputs=[["chunk1", "chunk2"]],
-                model="voyage-context-3",
+                model="voyage-4-large",
                 input_type="document",
             )
 
@@ -55,7 +55,7 @@ class TestAsyncVoyageEmbedder:
             assert len(vector) == 1024
             mock_client.contextualized_embed.assert_called_once_with(
                 inputs=[["search term"]],
-                model="voyage-context-3",
+                model="voyage-4-large",
                 input_type="query",
             )
 
@@ -75,7 +75,7 @@ class TestAsyncVoyageEmbedder:
             assert vectors[1] == [0.2] * 1024
             mock_client.contextualized_embed.assert_called_once_with(
                 inputs=[["desc A"], ["desc B"], ["desc C"]],
-                model="voyage-context-3",
+                model="voyage-4-large",
                 input_type="document",
             )
 

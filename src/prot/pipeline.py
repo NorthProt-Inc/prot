@@ -8,7 +8,6 @@ from uuid import uuid4
 
 from prot.config import settings
 from prot.context import ContextManager
-from prot.conversation_log import ConversationLogger
 from prot.llm import LLMClient
 from prot.persona import load_persona
 from prot.playback import AudioPlayer
@@ -42,8 +41,6 @@ class Pipeline:
         self._tts = TTSClient()
         self._player = AudioPlayer()
         self._ctx = ContextManager(persona_text=load_persona())
-        self._conv_logger = ConversationLogger()
-
         # Optional components — initialized in startup()
         self._memory = None
         self._graphrag = None
@@ -63,7 +60,6 @@ class Pipeline:
         self._speaking_since: float = 0.0  # monotonic time when SPEAKING entered
         self._barge_in_grace: float = 1.5  # seconds to ignore VAD after SPEAKING starts
         self._background_tasks: set[asyncio.Task] = set()
-        self._session_msg_offset: int = 0
         self._exchange_count: int = 0
         self._consecutive_errors: int = 0
         self._error_backoff: float = 0.0
@@ -101,20 +97,14 @@ class Pipeline:
             from prot.graphrag import GraphRAGStore
             from prot.embeddings import AsyncVoyageEmbedder
             from prot.memory import MemoryExtractor
-            from prot.community import CommunityDetector
             from prot.reranker import VoyageReranker
 
             self._graphrag = GraphRAGStore(pool=self._pool)
             self._embedder = AsyncVoyageEmbedder()
             self._reranker = VoyageReranker()
-            community_detector = CommunityDetector(
-                store=self._graphrag,
-                embedder=self._embedder,
-            )
             self._memory = MemoryExtractor(
                 store=self._graphrag,
                 embedder=self._embedder,
-                community_detector=community_detector,
                 reranker=self._reranker,
             )
         except Exception:
@@ -462,7 +452,6 @@ class Pipeline:
                 self._sm.on_active_timeout()
                 await self._stt.disconnect()
                 self._vad.reset()
-                self._save_session_log()
 
         self._active_timeout_task = asyncio.create_task(_timeout())
 
@@ -478,8 +467,6 @@ class Pipeline:
         if not self._memory:
             return
         self._exchange_count += 1
-        if self._exchange_count % settings.memory_extraction_interval != 0:
-            return
         query = self._current_transcript  # capture before potential barge-in reset
 
         async def _extract() -> None:
@@ -520,15 +507,6 @@ class Pipeline:
 
         self._bg(_save())
 
-    def _save_session_log(self) -> None:
-        """Save new conversation messages as JSONL and reset session."""
-        messages = self._ctx.get_messages()
-        new_messages = messages[self._session_msg_offset:]
-        if new_messages:
-            self._conv_logger.save_session(self._conversation_id, new_messages)
-        self._session_msg_offset = len(messages)
-        self._conversation_id = uuid4()
-
     def diagnostics(self) -> dict:
         """Return runtime diagnostics for monitoring."""
         diag = {
@@ -547,7 +525,6 @@ class Pipeline:
         """Clean shutdown of all components."""
         self._stt_connected = False
         self._pending_audio.clear()
-        self._save_session_log()
 
         if self._active_timeout_task is not None:
             self._active_timeout_task.cancel()
@@ -590,14 +567,6 @@ class Pipeline:
                 await self._memory.save_extraction(extraction)
             except Exception:
                 logger.debug("Final extraction failed", exc_info=True)
-
-        # Export DB tables to CSV
-        if self._pool is not None:
-            try:
-                from prot.db import export_tables
-                await export_tables(self._pool)
-            except Exception:
-                logger.debug("DB export error", exc_info=True)
 
         if self._pool is not None:
             try:
