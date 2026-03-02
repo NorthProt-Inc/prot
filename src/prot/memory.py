@@ -237,6 +237,7 @@ class MemoryExtractor:
             text = text.split("<summary>", 1)[1].split("</summary>", 1)[0]
         return text.strip()
 
+    @logged(slow_ms=2000)
     async def pre_load_context(self, query: str) -> str:
         """Search all memory layers, apply time-decay, optionally rerank, format for Block 2."""
         query_embedding = await self._embedder.embed_query(query)

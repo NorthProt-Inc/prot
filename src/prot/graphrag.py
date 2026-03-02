@@ -8,7 +8,9 @@ from uuid import UUID
 
 import asyncpg
 
-from prot.logging import logged
+from prot.logging import get_logger, logged
+
+logger = get_logger(__name__)
 
 
 class MemoryStore:
@@ -181,6 +183,7 @@ class MemoryStore:
 
     # -- Conversation messages (unchanged) --
 
+    @logged(slow_ms=500)
     async def save_message(
         self, conversation_id: UUID, role: str, content: str,
     ) -> UUID:
