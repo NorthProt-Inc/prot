@@ -1,97 +1,79 @@
-"""Memory extraction and pre-loading via GraphRAG."""
+"""Compaction-driven memory extraction and RAG context retrieval.
+
+Memory pipeline fires at two points:
+1. Compaction event — pause_after_compaction intercepts the summary
+2. Shutdown — forced summarization using the default compaction prompt
+
+Extraction is 2-step:
+1. Get compaction summary (from API event or manual Haiku/Flash call)
+2. Send to Haiku/Flash for structured 4-layer parsing
+"""
 
 from __future__ import annotations
 
-import asyncio
 import json
+from datetime import datetime, timezone
 
 from anthropic import AsyncAnthropic
 
 from prot.config import settings
+from prot.decay import AdaptiveDecayCalculator
 from prot.embeddings import AsyncVoyageEmbedder
-from prot.graphrag import GraphRAGStore
+from prot.graphrag import MemoryStore
 from prot.logging import get_logger, logged
-from prot.processing import content_to_text, is_tool_result_message, strip_markdown_fences
+from prot.processing import content_to_text, strip_markdown_fences
 
 logger = get_logger(__name__)
 
+DEFAULT_COMPACTION_PROMPT = (
+    "You have written a partial transcript for the initial task above. "
+    "Please write a summary of the transcript. The purpose of this summary is "
+    "to provide continuity so you can continue to make progress towards solving "
+    "the task in a future context, where the raw history above may not be accessible "
+    "and will be replaced with this summary. Write down anything that would be helpful, "
+    "including the state, next steps, learnings etc. "
+    "You must wrap your summary in a `<summary></summary>` block."
+)
 
-EXTRACTION_PROMPT_BASE = """Extract entities and relationships from this conversation segment.
-The conversation may be in Korean or English. Keep entity names in their original language.
+_EXTRACTION_PROMPT = """You are a memory extraction system. Given a conversation summary,
+extract structured memories into 4 layers. The summary may be in Korean or English.
+Keep names and terms in their original language.
 
 Return JSON with this exact structure:
 {
-  "entities": [{"name": "...", "type": "person|place|organization|technology|event|preference", "description": "..."}],
-  "relationships": [{"source": "...", "target": "...", "type": "...", "description": "..."}]
+  "semantic": [
+    {"category": "person|preference|fact|skill|relationship", "subject": "...", "predicate": "...", "object": "...", "confidence": 0.0-1.0}
+  ],
+  "episodic": {
+    "summary": "...",
+    "topics": ["..."],
+    "emotional_tone": "warm|tense|playful|curious|neutral|...",
+    "significance": 0.0-1.0,
+    "duration_turns": 0
+  },
+  "emotional": [
+    {"emotion": "joy|frustration|curiosity|gratitude|...", "trigger_context": "...", "intensity": 0.0-1.0}
+  ],
+  "procedural": [
+    {"pattern": "...", "frequency": "daily|weekly|occasional|null", "confidence": 0.0-1.0}
+  ]
 }
 
-Extract names, places, preferences, plans, opinions, and technical topics.
-When you encounter pronouns or references, resolve them to known entities where possible.
-Skip generic greetings and filler. If nothing meaningful, return empty arrays.
-
-## Entity Type Guidelines
-
-Choose the most specific type. Avoid defaulting to "concept":
-- **person**: Named individuals (민수, Sarah, Elon Musk)
-- **place**: Physical locations (강남, Tokyo, Akihabara)
-- **organization**: Companies, institutions, teams (카카오, Google, MIT)
-- **technology**: Programming languages, frameworks, tools, models, APIs (Rust, React, Claude, pgvector)
-- **event**: Time-bound occurrences (trips, meetings, releases, deadlines)
-- **preference**: Expressed likes, dislikes, opinions, choices (좋아하는 음식, preferred IDE)
-
-## Relationship Type Constraints
-
-Use ONLY these canonical types:
-- **Structural**: contains, part_of, instance_of
-- **Causal**: causes, enables, precedes, triggers
-- **Dependency**: requires, depends_on, supports
-- **Association**: related_to, similar_to, contrasts_with, alternative_to
-- **Social**: works_at, works_with, knows, created_by, owns
-- **Action**: uses, produces, improves, replaces
-- **Spatial**: located_in
-- **Preference**: prefers, interested_in
-
-If none of the above fits, use "related_to". Never invent new relationship types.
-
-## Examples
-
-### Example 1
-Input:
-user: 오늘 민수랑 강남에서 점심 먹었어
-assistant: 민수는 어떤 사이예요?
-user: 대학교 때부터 친구야. 요즘 카카오에서 일해
-
-Output:
-{"entities": [{"name": "민수", "type": "person", "description": "대학교 때부터 친구, 카카오에서 근무"}, {"name": "강남", "type": "place", "description": "점심 식사 장소"}, {"name": "카카오", "type": "organization", "description": "민수의 직장"}], "relationships": [{"source": "민수", "target": "카카오", "type": "works_at", "description": "민수가 카카오에서 근무"}]}
-
-### Example 2
-Input:
-user: I'm planning a trip to Tokyo next month with Sarah
-assistant: Sounds fun! What are you planning to do there?
-user: We want to visit Akihabara and try some ramen spots Sarah found on Instagram
-
-Output:
-{"entities": [{"name": "Sarah", "type": "person", "description": "Travel companion for Tokyo trip"}, {"name": "Tokyo", "type": "place", "description": "Upcoming trip destination next month"}, {"name": "Akihabara", "type": "place", "description": "Planned visit during Tokyo trip"}], "relationships": [{"source": "Sarah", "target": "Tokyo", "type": "related_to", "description": "Sarah is traveling to Tokyo together with the user"}]}
-
-### Example 3
-Input:
-user: 요즘 Rust 배우고 있는데 생각보다 어렵다
-assistant: 어떤 부분이 어려워요?
-user: 소유권 개념이 좀 헷갈려. 근데 성능은 확실히 좋더라
-
-Output:
-{"entities": [{"name": "Rust", "type": "technology", "description": "현재 학습 중인 프로그래밍 언어, 소유권 개념이 어렵지만 성능이 좋다고 평가"}], "relationships": []}"""
-
-_KNOWN_ENTITIES_TEMPLATE = "Previously known entities: {names}. Link new information to these when relevant."
+Rules:
+- semantic: SPO triples for facts, preferences, knowledge. Be specific and concise.
+- episodic: ONE episode summarizing this conversation segment. Always include.
+- emotional: Capture emotional highlights. Empty array if no notable emotions.
+- procedural: Behavioral patterns observed. Empty array if none.
+- If the summary has no meaningful content, return empty arrays and null episodic."""
 
 
 class MemoryExtractor:
-    """Extract and manage long-term memory from conversations."""
+    """Compaction-driven memory extraction and retrieval."""
 
     def __init__(
         self,
         anthropic_key: str | None = None,
-        store: GraphRAGStore | None = None,
+        store: MemoryStore | None = None,
         embedder: AsyncVoyageEmbedder | None = None,
         reranker=None,
     ):
@@ -99,173 +81,221 @@ class MemoryExtractor:
         self._store = store
         self._embedder = embedder
         self._reranker = reranker
-        self._last_extracted_index: int = 0
-        self._known_entities: set[str] = set()
+        self._decay = AdaptiveDecayCalculator(
+            base_rate=settings.decay_base_rate,
+            min_retention=settings.decay_min_retention,
+        )
 
     async def close(self) -> None:
-        """Close the underlying Anthropic client."""
         await self._llm.close()
         if self._reranker:
             await self._reranker.close()
 
     @logged(slow_ms=3000)
-    async def extract_from_conversation(
-        self, messages: list[dict], known_entity_names: list[str] | None = None,
-    ) -> dict:
-        """Extract entities and relationships from conversation segment."""
-        logger.info("Extracting", messages=len(messages))
-        conversation_text = "\n".join(
-            f"{m['role']}: {content_to_text(m['content'])}" for m in messages
-        )
-        system_blocks = [
-            {"type": "text", "text": EXTRACTION_PROMPT_BASE, "cache_control": {"type": "ephemeral"}},
-        ]
-        if known_entity_names:
-            known_text = _KNOWN_ENTITIES_TEMPLATE.format(names=", ".join(known_entity_names))
-            system_blocks.append({"type": "text", "text": known_text})
+    async def extract_from_summary(self, summary_text: str) -> dict:
+        """Send compaction summary to Haiku/Flash for structured 4-layer extraction."""
+        logger.info("Extracting from summary", chars=len(summary_text))
         response = await self._llm.messages.create(
             model=settings.memory_extraction_model,
-            max_tokens=2000,
-            system=system_blocks,
-            messages=[{"role": "user", "content": conversation_text}],
+            max_tokens=4000,
+            system=[{
+                "type": "text",
+                "text": _EXTRACTION_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{"role": "user", "content": summary_text}],
         )
         try:
             raw = response.content[0].text
         except (IndexError, AttributeError):
-            logger.warning("Empty LLM response for extraction")
-            return {"entities": [], "relationships": []}
-        # Strip markdown fencing if present
+            logger.warning("Empty extraction response")
+            return {"semantic": [], "episodic": None, "emotional": [], "procedural": []}
+
         raw = strip_markdown_fences(raw)
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
             logger.warning("Extraction JSON parse failed", raw=raw[:200])
-            return {"entities": [], "relationships": []}
+            return {"semantic": [], "episodic": None, "emotional": [], "procedural": []}
 
-    @logged(slow_ms=2000)
+    @logged(slow_ms=5000)
     async def save_extraction(self, extraction: dict) -> None:
-        """Embed and save extracted entities and relationships in a single transaction."""
-        entities = extraction.get("entities", [])
-        relationships = extraction.get("relationships", [])
+        """Embed and save extracted memories across all 4 layers."""
+        semantics = extraction.get("semantic") or []
+        episodic = extraction.get("episodic")
+        emotionals = extraction.get("emotional") or []
+        procedurals = extraction.get("procedural") or []
 
-        if not entities:
+        if not semantics and not episodic and not emotionals and not procedurals:
             logger.debug("Extraction empty, skipping save")
             return
 
-        descriptions = [e["description"] for e in entities]
-        embeddings = await self._embedder.embed_texts_contextual(descriptions)
+        # Collect all texts to embed in one batch
+        texts_to_embed = []
+        # Semantic: concatenate SPO for embedding
+        for s in semantics:
+            texts_to_embed.append(f"{s['subject']} {s['predicate']} {s['object']}")
+        sem_count = len(semantics)
+
+        # Episodic
+        if episodic and episodic.get("summary"):
+            texts_to_embed.append(episodic["summary"])
+        epi_count = 1 if (episodic and episodic.get("summary")) else 0
+
+        # Emotional
+        for e in emotionals:
+            texts_to_embed.append(f"{e['emotion']}: {e['trigger_context']}")
+        emo_count = len(emotionals)
+
+        # Procedural
+        for p in procedurals:
+            texts_to_embed.append(p["pattern"])
+
+        if not texts_to_embed:
+            return
+
+        embeddings = await self._embedder.embed_texts(texts_to_embed)
+        idx = 0
 
         async with self._store.acquire() as conn:
             async with conn.transaction():
-                entity_ids = {}
-                for entity, embedding in zip(entities, embeddings):
-                    eid = await self._store.upsert_entity(
-                        name=entity["name"],
-                        entity_type=entity["type"],
-                        description=entity["description"],
-                        embedding=embedding,
+                # Semantic
+                for s, emb in zip(semantics, embeddings[idx:idx + sem_count]):
+                    await self._store.upsert_semantic(
+                        category=s["category"],
+                        subject=s["subject"],
+                        predicate=s["predicate"],
+                        object_=s["object"],
+                        confidence=s.get("confidence", 1.0),
+                        embedding=emb,
                         conn=conn,
                     )
-                    entity_ids[entity["name"]] = eid
-                    self._known_entities.add(entity["name"])
+                idx += sem_count
 
-                for rel in relationships:
-                    src_id = entity_ids.get(rel["source"])
-                    tgt_id = entity_ids.get(rel["target"])
-                    if not src_id:
-                        src_id = await self._store.get_entity_id_by_name(
-                            rel["source"], conn=conn,
-                        )
-                    if not tgt_id:
-                        tgt_id = await self._store.get_entity_id_by_name(
-                            rel["target"], conn=conn,
-                        )
-                    if src_id and tgt_id:
-                        await self._store.upsert_relationship(
-                            source_id=src_id,
-                            target_id=tgt_id,
-                            relation_type=rel["type"],
-                            description=rel["description"],
-                            conn=conn,
-                        )
-        logger.info("Saved", entities=len(entities), rels=len(relationships))
+                # Episodic
+                episode_id = None
+                if epi_count:
+                    episode_id = await self._store.insert_episodic(
+                        summary=episodic["summary"],
+                        topics=episodic.get("topics", []),
+                        emotional_tone=episodic.get("emotional_tone"),
+                        significance=episodic.get("significance", 0.5),
+                        duration_turns=episodic.get("duration_turns", 0),
+                        embedding=embeddings[idx],
+                        conn=conn,
+                    )
+                    idx += 1
 
-    async def _rerank_if_available(
-        self, query: str, items: list[dict], text_key: str,
-    ) -> list[dict]:
-        """Rerank items using the reranker if available, otherwise return as-is."""
-        if self._reranker and len(items) > 1:
-            return await self._reranker.rerank(
-                query=query, items=items, text_key=text_key,
-                top_k=settings.rerank_top_k,
-            )
-        return items
+                # Emotional (linked to episode)
+                for e, emb in zip(emotionals, embeddings[idx:idx + emo_count]):
+                    await self._store.insert_emotional(
+                        emotion=e["emotion"],
+                        trigger_context=e["trigger_context"],
+                        intensity=e.get("intensity", 0.5),
+                        episode_id=episode_id,
+                        embedding=emb,
+                        conn=conn,
+                    )
+                idx += emo_count
 
-    async def extract_incremental(self, all_messages: list[dict]) -> dict:
-        """Extract from all unprocessed messages since last extraction."""
-        start = self._last_extracted_index
-        segment = [m for m in all_messages[start:] if not is_tool_result_message(m)]
-        if not segment:
-            return {"entities": [], "relationships": []}
-        known_names = sorted(self._known_entities)
-        extraction = await self.extract_from_conversation(segment, known_entity_names=known_names)
-        self._last_extracted_index = len(all_messages)
-        return extraction
+                # Procedural
+                for p, emb in zip(procedurals, embeddings[idx:]):
+                    await self._store.upsert_procedural(
+                        pattern=p["pattern"],
+                        frequency=p.get("frequency"),
+                        confidence=p.get("confidence", 0.5),
+                        embedding=emb,
+                        conn=conn,
+                    )
 
-    async def seed_known_entities(self) -> None:
-        """Seed known entities from DB on startup."""
-        if not self._store:
-            return
-        names = await self._store.get_entity_names()
-        self._known_entities.update(names)
+        logger.info(
+            "Saved memories",
+            semantic=len(semantics), episodic=bool(episodic),
+            emotional=len(emotionals), procedural=len(procedurals),
+        )
+
+    @logged(slow_ms=5000)
+    async def generate_shutdown_summary(self, messages: list[dict]) -> str:
+        """Generate a compaction-equivalent summary at shutdown using Haiku/Flash."""
+        conversation_text = "\n".join(
+            f"{m['role']}: {content_to_text(m['content'])}" for m in messages
+        )
+        response = await self._llm.messages.create(
+            model=settings.memory_extraction_model,
+            max_tokens=4000,
+            messages=[
+                {"role": "user", "content": f"{conversation_text}\n\n{DEFAULT_COMPACTION_PROMPT}"},
+            ],
+        )
+        try:
+            text = response.content[0].text
+        except (IndexError, AttributeError):
+            return ""
+
+        # Extract content from <summary> tags if present
+        if "<summary>" in text and "</summary>" in text:
+            text = text.split("<summary>", 1)[1].split("</summary>", 1)[0]
+        return text.strip()
 
     async def pre_load_context(self, query: str) -> str:
-        """Search GraphRAG (entities + neighbors + communities) and assemble Block 2 context."""
-        query_embedding = await self._embedder.embed_query_contextual(query)
-
-        parts: list[str] = []
-        token_estimate = 0
-
-        def _add(text: str) -> bool:
-            nonlocal token_estimate
-            token_estimate += len(text) // 4
-            if token_estimate > settings.rag_context_target_tokens:
-                return False
-            parts.append(text)
-            return True
-
-        # 1. Entity semantic search + neighbor traversal (concurrent)
-        entities = await self._store.search_entities_semantic(
+        """Search all memory layers, apply time-decay, optionally rerank, format for Block 2."""
+        query_embedding = await self._embedder.embed_query(query)
+        results = await self._store.search_all(
             query_embedding=query_embedding, top_k=settings.rag_top_k,
         )
 
-        entities = await self._rerank_if_available(query, entities, "description")
+        if not results:
+            return "(no memory context)"
 
-        neighbor_lists = await asyncio.gather(*(
-            self._store.get_entity_neighbors(entity["id"])
-            for entity in entities
-        ))
-        for entity, neighbors in zip(entities, neighbor_lists):
-            line = f"- {entity['name']} ({entity['entity_type']}): {entity['description']}"
-            if not _add(line):
+        # Apply time-decay scoring
+        now = datetime.now(timezone.utc)
+        for r in results:
+            created = r.get("created_at")
+            if created:
+                if isinstance(created, str):
+                    created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                hours = (now - created).total_seconds() / 3600
+            else:
+                hours = 0.0
+
+            memory_type = _table_to_memory_type(r.get("table_name", ""))
+            decay_score = self._decay.calculate(
+                importance=r.get("significance", r.get("confidence", 0.5)),
+                hours_passed=hours,
+                access_count=r.get("mention_count", r.get("observation_count", 0)),
+                memory_type=memory_type,
+            )
+            r["effective_score"] = r["similarity"] * decay_score
+
+        # Sort by effective score
+        results.sort(key=lambda r: r["effective_score"], reverse=True)
+
+        # Optional reranking
+        if self._reranker and len(results) > 1:
+            results = await self._reranker.rerank(
+                query=query, items=results, text_key="text",
+                top_k=settings.rerank_top_k,
+            )
+
+        # Format into Block 2 context with token budget
+        parts: list[str] = []
+        token_estimate = 0
+        for r in results:
+            text = r.get("text", "")
+            token_estimate += len(text) // 4
+            if token_estimate > settings.rag_context_target_tokens:
                 break
-            for n in neighbors[:3]:
-                rel = f" ({n['relation_type']})" if n.get("relation_type") else ""
-                desc = n.get("rel_description") or n["description"]
-                nline = f"  > {n['name']}{rel}: {desc}"
-                if not _add(nline):
-                    break
-
-        # 2. Community summaries
-        communities = await self._store.search_communities(
-            query_embedding=query_embedding,
-            top_k=settings.rag_top_k,
-        )
-
-        communities = await self._rerank_if_available(query, communities, "summary")
-
-        for community in communities:
-            if not _add(community["summary"]):
-                break
+            table = r.get("table_name", "unknown")
+            parts.append(f"[{table}] {text}")
 
         return "\n".join(parts) if parts else "(no memory context)"
+
+
+def _table_to_memory_type(table_name: str) -> str:
+    """Map table_name to decay memory_type."""
+    return {
+        "semantic": "fact",
+        "episodic": "conversation",
+        "emotional": "insight",
+        "procedural": "preference",
+    }.get(table_name, "conversation")
