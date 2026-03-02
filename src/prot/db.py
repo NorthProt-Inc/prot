@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import asyncpg
 from pgvector.asyncpg import register_vector
 
@@ -31,33 +29,3 @@ async def init_pool(dsn: str | None = None) -> asyncpg.Pool:
     return _pool
 
 
-EXPORT_TABLES = [
-    "entities",
-    "relationships",
-    "communities",
-    "community_members",
-    "conversation_messages",
-]
-
-
-async def export_tables(pool: asyncpg.Pool, output_dir: str | None = None) -> None:
-    """Export all tables to CSV using asyncpg COPY TO.
-
-    Vector columns are exported as their PostgreSQL text representation.
-    Each table is exported independently so one failure does not block others.
-    """
-    out = Path(output_dir or settings.db_export_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    async with pool.acquire() as conn:
-        for table in EXPORT_TABLES:
-            dest = str(out / f"{table}.csv")
-            try:
-                result = await conn.copy_from_query(
-                    f"SELECT * FROM {table}",
-                    output=dest,
-                    format="csv",
-                    header=True,
-                )
-                logger.info("Exported", table=table, result=result)
-            except Exception:
-                logger.warning("Export failed", table=table, exc_info=True)
