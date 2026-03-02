@@ -34,13 +34,12 @@ src/prot/
   processing.py    # Orchestrates LLM→TTS→playback per utterance
   context.py       # 3-block system prompt builder + conversation data container
   persona.py       # Axel persona definition (loaded from data/axel.xml)
-  memory.py        # Background memory extraction + RAG context retrieval
-  graphrag.py      # pgvector-backed entity/relationship/community storage
-  community.py     # Louvain community detection + LLM summarization
-  embeddings.py    # Voyage AI contextual embeddings (voyage-context-3 only)
+  memory.py        # Compaction-driven 4-layer memory extraction + RAG context retrieval
+  graphrag.py      # pgvector-backed 4-layer memory storage (semantic, episodic, emotional, procedural)
+  decay.py         # AdaptiveDecayCalculator for time-decay memory scoring
+  embeddings.py    # Voyage AI embeddings (voyage-4-large)
   reranker.py      # Voyage AI reranker (rerank-2.5)
   db.py            # asyncpg connection pool + schema init + CSV export on shutdown
-  conversation_log.py  # Daily JSONL conversation logger (data/conversations/)
   schema.sql       # PostgreSQL schema (auto-applied on startup)
   logging/         # Structured logging subsystem
     setup.py           # Logger configuration
@@ -64,9 +63,11 @@ src/prot/
 - **Server-side compaction**: Beta API (`compact-2026-01-12` + `context-management-2025-06-27`)
   manages context automatically. Thinking clearing (keep 2 turns), tool result clearing (>30K tokens),
   and compaction (>50K tokens) all run server-side. No client-side trimming needed.
-- **Memory extraction**: Runs in background after each exchange. Uses configurable model (default Sonnet 4.6) for entity/relationship extraction.
-  Contextual embeddings (voyage-context-3) for document-aware entity storage. Reranker (rerank-2.5) refines RAG results.
-  Community detection triggers every 5 extractions via CommunityDetector (Louvain clustering).
+- **Memory extraction**: Compaction-driven. No per-exchange extraction.
+  Fires on compaction events (pause_after_compaction) and shutdown (forced summarization).
+  Haiku/Flash extracts 4-layer structured memories from compaction summary.
+  Time-decay scoring (AdaptiveDecayCalculator) at query time.
+  Embeddings: voyage-4-large. Reranker: rerank-2.5.
 - **Reranker**: RAG retrieval uses Voyage rerank-2.5 to re-score candidate results before context injection.
   Improves relevance of memory recall without increasing embedding dimensionality.
 - **DB optional**: App works without PostgreSQL — memory/RAG features gracefully degrade.
