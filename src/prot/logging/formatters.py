@@ -13,18 +13,17 @@ from prot.logging.constants import (
 def _prepare_record(record: logging.LogRecord) -> tuple[list[str], str]:
     """Extract trace metadata from record and build shared kv_parts + indent.
 
-    Pops ``_depth``, ``_trace_dir``, and ``_elapsed`` from ``extra_data`` so
-    they don't appear as plain k=v output.  Returns ``(kv_parts, indent)``
-    ready for both colored and plain line assembly.
+    Reads ``_depth`` and ``_elapsed`` from ``extra_data`` without mutating it,
+    and filters ``_``-prefixed keys from k=v output.  Returns ``(kv_parts,
+    indent)`` ready for both colored and plain line assembly.
     """
     extra_data: dict = getattr(record, "extra_data", {})
 
-    # Extract trace metadata (pop to keep out of k=v output)
-    trace_depth = extra_data.pop("_depth", None)
-    extra_data.pop("_trace_dir", None)
-    trace_elapsed = extra_data.pop("_elapsed", None)
+    # Extract trace metadata (non-mutating to support multiple formatters)
+    trace_depth = extra_data.get("_depth", None)
+    trace_elapsed = extra_data.get("_elapsed", None)
 
-    kv_parts = [f"{k}={v}" for k, v in extra_data.items()]
+    kv_parts = [f"{k}={v}" for k, v in extra_data.items() if not k.startswith("_")]
 
     if trace_elapsed:
         kv_parts.append(trace_elapsed)
@@ -55,14 +54,21 @@ class SmartFormatter(logging.Formatter):
         level_color = LEVEL_COLORS.get(record.levelname, "")
 
         kv_parts, indent = _prepare_record(record)
-        kv_str = f" {DIM}| {' '.join(kv_parts)}{RESET}" if kv_parts else ""
         msg = record.getMessage()
+
+        # Severity-aware body coloring: WARNING+ gets level_color on message area
+        if record.levelno >= logging.WARNING:
+            kv_tail = f" | {' '.join(kv_parts)}" if kv_parts else ""
+            body = f"{level_color}{indent}{msg}{kv_tail}{RESET}"
+        else:
+            kv_tail = f" {DIM}| {' '.join(kv_parts)}{RESET}" if kv_parts else ""
+            body = f"{indent}{msg}{kv_tail}"
 
         line = (
             f"{DIM}{timestamp}{RESET}  "
             f"{level_color}{record.levelname:<5}{RESET} "
             f"[{color}{abbrev}{RESET}|{color}{mod:<10}{RESET}] "
-            f"{indent}{msg}{kv_str}"
+            f"{body}"
         )
 
         if record.exc_info and not record.exc_text:

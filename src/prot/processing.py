@@ -66,3 +66,10 @@ def chunk_sentences(text: str) -> tuple[list[str], str]:
         complete.append(remainder)
         remainder = ""
     return complete, remainder
+
+
+def strip_markdown_fences(text: str) -> str:
+    """Strip markdown code fences from LLM responses."""
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
+    return text

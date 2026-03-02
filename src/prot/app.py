@@ -55,13 +55,13 @@ app = FastAPI(lifespan=lifespan)
 async def health():
     return {
         "status": "ok",
-        "state": pipeline.state.state.value if pipeline else "not_started",
+        "state": pipeline.current_state if pipeline else "not_started",
     }
 
 
 @app.get("/state")
 async def state():
-    return {"state": pipeline.state.state.value if pipeline else "not_started"}
+    return {"state": pipeline.current_state if pipeline else "not_started"}
 
 
 @app.get("/diagnostics")

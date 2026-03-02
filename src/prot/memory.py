@@ -11,7 +11,7 @@ from prot.config import settings
 from prot.embeddings import AsyncVoyageEmbedder
 from prot.graphrag import GraphRAGStore
 from prot.logging import get_logger, logged
-from prot.processing import content_to_text, is_tool_result_message
+from prot.processing import content_to_text, is_tool_result_message, strip_markdown_fences
 
 logger = get_logger(__name__)
 
@@ -140,8 +140,7 @@ class MemoryExtractor:
             logger.warning("Empty LLM response for extraction")
             return {"entities": [], "relationships": []}
         # Strip markdown fencing if present
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        raw = strip_markdown_fences(raw)
         try:
             return json.loads(raw)
         except json.JSONDecodeError:

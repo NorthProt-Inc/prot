@@ -55,3 +55,28 @@ class TestPlainFormatter:
         record = _make_record(attempt=3)
         line = fmt.format(record)
         assert "attempt=3" in line
+
+
+class TestFormatterMutationSafety:
+    def test_second_formatter_sees_trace_metadata(self):
+        """Both formatters must produce identical trace output from the same record."""
+        record = logging.LogRecord(
+            name="prot.test", level=logging.DEBUG, pathname="", lineno=0,
+            msg="<- test_func", args=(), exc_info=None,
+        )
+        record.extra_data = {"_depth": 2, "_elapsed": "+42.0ms", "key": "val"}
+
+        smart = SmartFormatter()
+        plain = PlainFormatter()
+
+        smart_output = smart.format(record)
+        plain_output = plain.format(record)
+
+        # Both should show the depth indent and elapsed time
+        assert "| | " in smart_output  # depth=2 indent
+        assert "+42.0ms" in smart_output
+        assert "| | " in plain_output  # depth=2 indent
+        assert "+42.0ms" in plain_output
+        # Both should show the regular key
+        assert "key=val" in smart_output
+        assert "key=val" in plain_output

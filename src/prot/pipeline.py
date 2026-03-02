@@ -73,6 +73,10 @@ class Pipeline:
         """Expose state machine for external access (e.g., health endpoints)."""
         return self._sm
 
+    @property
+    def current_state(self) -> str:
+        return self._sm.state.value
+
     @logged(slow_ms=5000)
     async def startup(self) -> None:
         """Initialize optional async resources (HASS, DB, GraphRAG, embedder, memory)."""
@@ -351,10 +355,7 @@ class Pipeline:
                 if not tool_blocks:
                     # Normal completion — no tools
                     if self._sm.try_on_tts_complete():
-                        full_text = "".join(_response_parts)
-                        response_content = self._llm.last_response_content
-                        self._ctx.add_message("assistant", response_content or full_text)
-                        self._save_message_bg("assistant", full_text)
+                        full_text = self._commit_assistant_response(_response_parts)
                         logger.info("Response done", chars=len(full_text))
                         self._consecutive_errors = 0
                         self._error_backoff = 0.0
@@ -369,10 +370,7 @@ class Pipeline:
 
                 # Tool use detected — execute and loop
                 logger.info("Tool use", count=len(tool_blocks), iteration=iteration)
-                full_text = "".join(_response_parts)
-                response_content = self._llm.last_response_content
-                self._ctx.add_message("assistant", response_content or full_text)
-                self._save_message_bg("assistant", full_text)
+                full_text = self._commit_assistant_response(_response_parts)
 
                 tool_results = []
                 for block in tool_blocks:
@@ -380,7 +378,8 @@ class Pipeline:
                         if block.name == "hass_request" and self._hass_agent:
                             result = await self._hass_agent.request(block.input["command"])
                         else:
-                            result = await self._llm.execute_tool(block.name, block.input)
+                            logger.warning("Unknown tool", tool=block.name)
+                            result = {"error": f"Unknown tool: {block.name}"}
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": block.id,
@@ -497,6 +496,14 @@ class Pipeline:
                 logger.warning("Memory extraction failed", exc_info=True)
 
         self._bg(_extract())
+
+    def _commit_assistant_response(self, parts: list[str]) -> str:
+        """Join response parts, store in context and conversation log."""
+        full_text = "".join(parts)
+        content = self._llm.last_response_content
+        self._ctx.add_message("assistant", content or full_text)
+        self._save_message_bg("assistant", full_text)
+        return full_text
 
     def _save_message_bg(self, role: str, content: str) -> None:
         """Persist a conversation message to DB in the background."""

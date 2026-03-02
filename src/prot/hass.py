@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import httpx
 
-from prot.logging import get_logger
+from prot.logging import get_logger, logged
 
 logger = get_logger(__name__)
 
@@ -43,6 +43,7 @@ class HassAgent:
         self._agent_id = agent_id
         self._client = httpx.AsyncClient(timeout=_HASS_TIMEOUT)
 
+    @logged(slow_ms=2000, log_args=True)
     async def request(self, command: str) -> str:
         """Send command to HA conversation agent, return response text."""
         try:

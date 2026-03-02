@@ -1,6 +1,6 @@
 import asyncio
 
-from prot.logging import get_logger
+from prot.logging import get_logger, logged
 
 logger = get_logger(__name__)
 
@@ -35,6 +35,7 @@ class AudioPlayer:
             pass
         self._process = None
 
+    @logged(slow_ms=500)
     async def start(self) -> None:
         """Start paplay subprocess, killing any previous one first."""
         await self._kill_process()
@@ -58,6 +59,7 @@ class AudioPlayer:
                 logger.warning("paplay died")
                 await self._kill_process()
 
+    @logged(slow_ms=1000)
     async def finish(self) -> None:
         """Close stdin and wait for paplay to finish."""
         if self._process and self._process.stdin:

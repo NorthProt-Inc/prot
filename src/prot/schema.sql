@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS entities (
     name TEXT NOT NULL,
     entity_type TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    attributes JSONB NOT NULL DEFAULT '{}',
     name_embedding vector(1024),
     mention_count INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -22,7 +21,6 @@ CREATE TABLE IF NOT EXISTS relationships (
     relation_type TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     weight DOUBLE PRECISION NOT NULL DEFAULT 1.0,
-    attributes JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (source_id, target_id, relation_type)
@@ -48,8 +46,6 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     conversation_id UUID NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
-    content_embedding vector(1024),
-    metadata JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -60,10 +56,6 @@ CREATE INDEX IF NOT EXISTS idx_entities_name_embedding
 
 CREATE INDEX IF NOT EXISTS idx_communities_summary_embedding
     ON communities USING hnsw (summary_embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 128);
-
-CREATE INDEX IF NOT EXISTS idx_messages_content_embedding
-    ON conversation_messages USING hnsw (content_embedding vector_cosine_ops)
     WITH (m = 16, ef_construction = 128);
 
 -- Trigram index for fuzzy entity name matching

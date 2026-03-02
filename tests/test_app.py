@@ -10,7 +10,7 @@ class TestApp:
         mock_pipeline = MagicMock()
         mock_pipeline.startup = AsyncMock()
         mock_pipeline.shutdown = AsyncMock()
-        mock_pipeline.state.state.value = "idle"
+        mock_pipeline.current_state = "idle"
         mock_pipeline.on_audio_chunk = MagicMock()
 
         mock_audio = MagicMock()
@@ -35,7 +35,7 @@ class TestApp:
         mock_pipeline = MagicMock()
         mock_pipeline.startup = AsyncMock()
         mock_pipeline.shutdown = AsyncMock()
-        mock_pipeline.state.state.value = "listening"
+        mock_pipeline.current_state = "listening"
         mock_pipeline.on_audio_chunk = MagicMock()
 
         mock_audio = MagicMock()

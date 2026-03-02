@@ -8,6 +8,8 @@ from uuid import UUID
 
 import asyncpg
 
+from prot.logging import logged
+
 
 class GraphRAGStore:
     """pgvector-backed GraphRAG storage."""
@@ -30,6 +32,7 @@ class GraphRAGStore:
             async with self._pool.acquire() as c:
                 yield c
 
+    @logged(slow_ms=500)
     async def upsert_entity(
         self,
         name: str,
@@ -55,6 +58,7 @@ class GraphRAGStore:
             row = await c.fetchrow(query, namespace, name, entity_type, description, embedding)
             return row["id"]
 
+    @logged(slow_ms=500)
     async def upsert_relationship(
         self,
         source_id: UUID,
@@ -95,6 +99,7 @@ class GraphRAGStore:
             )
             return [r["name"] for r in rows]
 
+    @logged(slow_ms=500)
     async def search_entities_semantic(
         self, query_embedding: list[float], top_k: int = 10
     ) -> list[dict]:
@@ -110,6 +115,7 @@ class GraphRAGStore:
             )
             return [dict(r) for r in rows]
 
+    @logged(slow_ms=500)
     async def search_communities(
         self, query_embedding: list[float], top_k: int = 10
     ) -> list[dict]:
@@ -130,18 +136,16 @@ class GraphRAGStore:
         conversation_id: UUID,
         role: str,
         content: str,
-        embedding: list[float] | None = None,
     ) -> UUID:
         """Persist a conversation message to the database."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 """INSERT INTO conversation_messages
-                   (conversation_id, role, content, content_embedding)
-                   VALUES ($1, $2, $3, $4) RETURNING id""",
+                   (conversation_id, role, content)
+                   VALUES ($1, $2, $3) RETURNING id""",
                 conversation_id,
                 role,
                 content,
-                embedding,
             )
             return row["id"]
 
@@ -158,6 +162,7 @@ class GraphRAGStore:
             )
             return [dict(r) for r in entity_rows], [dict(r) for r in rel_rows]
 
+    @logged(slow_ms=3000)
     async def rebuild_communities(self, communities: list[dict]) -> None:
         """Clear all communities and insert new ones atomically.
 

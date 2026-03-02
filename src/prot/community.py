@@ -11,6 +11,7 @@ from prot.config import settings
 from prot.embeddings import AsyncVoyageEmbedder
 from prot.graphrag import GraphRAGStore
 from prot.logging import get_logger, logged
+from prot.processing import strip_markdown_fences
 
 logger = get_logger(__name__)
 
@@ -63,6 +64,11 @@ class CommunityDetector:
         """Close the underlying Anthropic client."""
         await self._llm.close()
 
+    async def _clear_communities(self) -> int:
+        await self._store.rebuild_communities([])
+        logger.info("No communities detected, cleared stale data")
+        return 0
+
     @logged(slow_ms=5000)
     async def rebuild(self) -> int:
         """Full community rebuild: detect, summarize, embed, save.
@@ -86,9 +92,7 @@ class CommunityDetector:
 
         G = self._build_graph(entities, relationships)
         if G.number_of_nodes() < 2:
-            await self._store.rebuild_communities([])
-            logger.info("No communities detected, cleared stale data")
-            return 0
+            return await self._clear_communities()
 
         partitions = self._detect_communities(G)
 
@@ -106,9 +110,7 @@ class CommunityDetector:
                 valid_groups.append(member_entities)
 
         if not valid_groups:
-            await self._store.rebuild_communities([])
-            logger.info("No communities detected, cleared stale data")
-            return 0
+            return await self._clear_communities()
 
         # Batch summarize all communities in one LLM call
         summaries = await self._summarize_communities_batch(valid_groups)
@@ -132,8 +134,7 @@ class CommunityDetector:
                 total_entities=sum(len(c["entity_ids"]) for c in communities),
             )
         else:
-            await self._store.rebuild_communities([])
-            logger.info("No communities detected, cleared stale data")
+            return await self._clear_communities()
 
         return len(communities)
 
@@ -201,8 +202,7 @@ class CommunityDetector:
     @staticmethod
     def _parse_batch_summaries(raw: str, expected_count: int) -> list[str] | None:
         """Parse batch JSON response. Returns None if incomplete."""
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+        raw = strip_markdown_fences(raw)
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError:

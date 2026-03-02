@@ -93,7 +93,7 @@ def _log_entry(
     entry_msg = f"-> {name}"
     if log_args:
         entry_msg += f"({_fmt_args(func, args, kwargs)})"
-    logger._log(level, entry_msg, (), {"_depth": depth, "_trace_dir": "entry"})
+    logger._log(level, entry_msg, (), {"_depth": depth})
 
 
 def _log_exit(
@@ -109,12 +109,12 @@ def _log_exit(
     if slow_ms and elapsed * 1000 > slow_ms:
         logger._log(
             logging.WARNING, f"!! {name} SLOW", (),
-            {"_depth": depth, "_trace_dir": "slow", "_elapsed": elapsed_str},
+            {"_depth": depth, "_elapsed": elapsed_str},
         )
     else:
         logger._log(
             level, f"<- {name}", (),
-            {"_depth": depth, "_trace_dir": "exit", "_elapsed": elapsed_str},
+            {"_depth": depth, "_elapsed": elapsed_str},
         )
 
 
@@ -127,7 +127,7 @@ def _log_error(
     """Log function failure with elapsed time."""
     logger._log(
         logging.ERROR, f"!! {name} FAILED", (),
-        {"_depth": depth, "_trace_dir": "error", "_elapsed": _fmt_time(elapsed)},
+        {"_depth": depth, "_elapsed": _fmt_time(elapsed)},
     )
 
 

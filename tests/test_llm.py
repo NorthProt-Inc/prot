@@ -125,12 +125,6 @@ class TestLLMClient:
         client.cancel()
         assert client._cancelled is True
 
-    async def test_execute_tool_unknown_returns_error(self):
-        client = LLMClient(api_key="test")
-        result = await client.execute_tool("unknown_tool", {})
-        assert "error" in result
-        assert "unknown_tool" in result["error"].lower()
-
     async def test_stream_passes_empty_tools_as_list(self):
         """Empty tools list should be passed as-is, not converted to None."""
         mock_stream = AsyncMock()
@@ -230,46 +224,6 @@ class TestLastUsage:
 
             assert client.last_usage is None
 
-
-class TestCountTokens:
-    async def test_count_tokens_returns_input_tokens(self):
-        with patch("prot.llm.AsyncAnthropic") as mock_cls:
-            mock_client = MagicMock()
-            mock_cls.return_value = mock_client
-            mock_client.beta.messages.count_tokens = AsyncMock(
-                return_value=MagicMock(input_tokens=42)
-            )
-
-            client = LLMClient(api_key="test")
-            result = await client.count_tokens(
-                system=[{"type": "text", "text": "test"}],
-                tools=[],
-                messages=[{"role": "user", "content": "hi"}],
-            )
-
-            assert result == 42
-            call_kwargs = mock_client.beta.messages.count_tokens.call_args.kwargs
-            assert call_kwargs["thinking"] == {"type": "adaptive"}
-
-    async def test_count_tokens_passes_system_and_tools(self):
-        with patch("prot.llm.AsyncAnthropic") as mock_cls:
-            mock_client = MagicMock()
-            mock_cls.return_value = mock_client
-            mock_client.beta.messages.count_tokens = AsyncMock(
-                return_value=MagicMock(input_tokens=100)
-            )
-
-            client = LLMClient(api_key="test")
-            system = [{"type": "text", "text": "persona"}]
-            tools = [{"name": "web_search", "type": "web_search_20250305"}]
-            messages = [{"role": "user", "content": "hello"}]
-
-            await client.count_tokens(system=system, tools=tools, messages=messages)
-
-            call_kwargs = mock_client.beta.messages.count_tokens.call_args.kwargs
-            assert call_kwargs["system"] == system
-            assert call_kwargs["tools"] == tools
-            assert call_kwargs["messages"] == messages
 
 
 class TestToolDetection:

@@ -1,6 +1,8 @@
 import voyageai
 
 from prot.config import settings
+from prot.embeddings import _close_voyage_client
+from prot.logging import logged
 
 
 class VoyageReranker:
@@ -16,6 +18,7 @@ class VoyageReranker:
         )
         self._model = model or settings.rerank_model
 
+    @logged(slow_ms=1000)
     async def rerank(
         self,
         query: str,
@@ -45,7 +48,4 @@ class VoyageReranker:
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
-        if hasattr(self._client, "close"):
-            await self._client.close()
-        elif hasattr(self._client, "aclose"):
-            await self._client.aclose()
+        await _close_voyage_client(self._client)

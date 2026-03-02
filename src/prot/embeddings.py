@@ -1,6 +1,15 @@
 import voyageai
 
 from prot.config import settings
+from prot.logging import logged
+
+
+async def _close_voyage_client(client) -> None:
+    """Close a Voyage AI client (duck-typed for SDK version compat)."""
+    if hasattr(client, "close"):
+        await client.close()
+    elif hasattr(client, "aclose"):
+        await client.aclose()
 
 
 class AsyncVoyageEmbedder:
@@ -16,11 +25,9 @@ class AsyncVoyageEmbedder:
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
-        if hasattr(self._client, "close"):
-            await self._client.close()
-        elif hasattr(self._client, "aclose"):
-            await self._client.aclose()
+        await _close_voyage_client(self._client)
 
+    @logged(slow_ms=1000)
     async def embed_query_contextual(self, text: str) -> list[float]:
         """Embed single query using voyage-context-3 (input_type='query')."""
         result = await self._client.contextualized_embed(
@@ -30,6 +37,7 @@ class AsyncVoyageEmbedder:
         )
         return result.results[0].embeddings[0]
 
+    @logged(slow_ms=2000)
     async def embed_chunks_contextual(self, chunks: list[str]) -> list[list[float]]:
         """Embed chunks using voyage-context-3. All chunks treated as one document's segments."""
         result = await self._client.contextualized_embed(

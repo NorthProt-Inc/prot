@@ -96,24 +96,6 @@ class LLMClient:
             return []
         return [b for b in self._last_response_content if getattr(b, "type", None) == "tool_use"]
 
-    async def count_tokens(
-        self,
-        system: list[dict],
-        tools: list[dict] | None,
-        messages: list[dict],
-    ) -> int:
-        """Count input tokens via Beta API with context management applied."""
-        result = await self._client.beta.messages.count_tokens(
-            model=settings.claude_model,
-            system=system,
-            tools=tools or [],
-            messages=messages,
-            thinking={"type": "adaptive"},
-            betas=_BETAS,
-            context_management=_build_context_management(),
-        )
-        return result.input_tokens
-
     def cancel(self) -> None:
         """Cancel the active stream."""
         self._cancelled = True
@@ -122,7 +104,3 @@ class LLMClient:
         """Close persistent HTTP clients."""
         await self._client.close()
 
-    async def execute_tool(self, tool_name: str, tool_input: dict) -> dict:
-        """Execute a tool call from Claude. Returns tool result."""
-        logger.info("Tool call", tool=tool_name)
-        return {"error": f"Unknown tool: {tool_name}"}
