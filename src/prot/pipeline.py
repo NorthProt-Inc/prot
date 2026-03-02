@@ -60,7 +60,6 @@ class Pipeline:
         self._speaking_since: float = 0.0  # monotonic time when SPEAKING entered
         self._barge_in_grace: float = 1.5  # seconds to ignore VAD after SPEAKING starts
         self._background_tasks: set[asyncio.Task] = set()
-        self._exchange_count: int = 0
         self._consecutive_errors: int = 0
         self._error_backoff: float = 0.0
 
@@ -94,12 +93,12 @@ class Pipeline:
             return
 
         try:
-            from prot.graphrag import GraphRAGStore
+            from prot.graphrag import MemoryStore
             from prot.embeddings import AsyncVoyageEmbedder
             from prot.memory import MemoryExtractor
             from prot.reranker import VoyageReranker
 
-            self._graphrag = GraphRAGStore(pool=self._pool)
+            self._graphrag = MemoryStore(pool=self._pool)
             self._embedder = AsyncVoyageEmbedder()
             self._reranker = VoyageReranker()
             self._memory = MemoryExtractor(
@@ -109,13 +108,6 @@ class Pipeline:
             )
         except Exception:
             logger.warning("Memory subsystem not available")
-
-        # Seed known entities from DB
-        try:
-            if self._memory:
-                await self._memory.seed_known_entities()
-        except Exception:
-            logger.debug("Entity seed failed", exc_info=True)
 
         # Pre-warm TTS connection pool
         try:
@@ -351,7 +343,7 @@ class Pipeline:
                         self._error_backoff = 0.0
                         reset_turn()
                         self._start_active_timeout()
-                        self._extract_memories_bg()
+                        self._handle_compaction_bg()
                     else:
                         # [FIX 3] Interrupted without tools — clean up turn timer
                         logger.info("Response interrupted", state=self._sm.state.value)
@@ -462,27 +454,26 @@ class Pipeline:
         task.add_done_callback(self._background_tasks.discard)
         return task
 
-    def _extract_memories_bg(self) -> None:
-        """Background task to extract and save memories — tracked for shutdown cleanup."""
+    def _handle_compaction_bg(self) -> None:
+        """Process compaction summary for memory extraction."""
         if not self._memory:
             return
-        self._exchange_count += 1
-        query = self._current_transcript  # capture before potential barge-in reset
+        summary = self._llm.last_compaction_summary
+        if not summary:
+            return
+        query = self._current_transcript
 
-        async def _extract() -> None:
+        async def _process():
             try:
-                messages = self._ctx.get_messages()
-                extraction = await self._memory.extract_incremental(messages)
+                extraction = await self._memory.extract_from_summary(summary)
                 await self._memory.save_extraction(extraction)
-
-                # Refresh RAG context
                 if query:
                     rag = await self._memory.pre_load_context(query)
                     self._ctx.update_rag_context(rag)
             except Exception:
-                logger.warning("Memory extraction failed", exc_info=True)
+                logger.warning("Compaction memory extraction failed", exc_info=True)
 
-        self._bg(_extract())
+        self._bg(_process())
 
     def _commit_assistant_response(self, parts: list[str]) -> str:
         """Join response parts, store in context and conversation log."""
@@ -559,14 +550,17 @@ class Pipeline:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
 
-        # Best-effort final extraction for unprocessed messages
+        # Best-effort shutdown summarization
         if self._memory:
             try:
                 messages = self._ctx.get_messages()
-                extraction = await self._memory.extract_incremental(messages)
-                await self._memory.save_extraction(extraction)
+                if messages:
+                    summary = await self._memory.generate_shutdown_summary(messages)
+                    if summary:
+                        extraction = await self._memory.extract_from_summary(summary)
+                        await self._memory.save_extraction(extraction)
             except Exception:
-                logger.debug("Final extraction failed", exc_info=True)
+                logger.debug("Shutdown memory extraction failed", exc_info=True)
 
         if self._pool is not None:
             try:

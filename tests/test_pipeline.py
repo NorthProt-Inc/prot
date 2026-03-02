@@ -80,7 +80,6 @@ def _make_pipeline():
     p._speaking_since = 0.0
     p._barge_in_grace = 1.5
     p._background_tasks = set()
-    p._exchange_count = 0
     p._consecutive_errors = 0
     p._error_backoff = 0.0
 
@@ -622,42 +621,32 @@ class TestResponseContentRouting:
         p._ctx.add_message.assert_called_once_with("assistant", "Fallback.")
 
 
-class TestExtractMemoriesBg:
-    """_extract_memories_bg() — background task lifecycle."""
+class TestCompactionHandler:
+    """_handle_compaction_bg() — compaction-driven memory extraction."""
 
-    async def test_background_task_tracked(self):
-        """Fire-and-forget tasks should be tracked for shutdown cleanup."""
+    async def test_compaction_triggers_memory_extraction(self):
         p = _make_pipeline()
         mock_memory = AsyncMock()
-        mock_memory.extract_from_conversation = AsyncMock(
-            return_value={"entities": [], "relationships": []}
+        mock_memory.extract_from_summary = AsyncMock(
+            return_value={"semantic": [], "episodic": None, "emotional": [], "procedural": []}
         )
         mock_memory.save_extraction = AsyncMock()
         p._memory = mock_memory
+        p._llm.last_compaction_summary = "User discussed coding."
 
-        p._extract_memories_bg()
+        p._handle_compaction_bg()
         assert len(p._background_tasks) == 1
         await asyncio.sleep(0.05)
-        assert len(p._background_tasks) == 0
 
-    async def test_shutdown_cancels_background_tasks(self):
-        """shutdown() should cancel in-flight background tasks."""
+        mock_memory.extract_from_summary.assert_awaited_once_with("User discussed coding.")
+
+    async def test_no_compaction_no_extraction(self):
         p = _make_pipeline()
-
-        async def slow_extract(msgs):
-            await asyncio.sleep(10)
-            return {"entities": [], "relationships": []}
-
         mock_memory = AsyncMock()
-        mock_memory.extract_from_conversation = slow_extract
-        mock_memory.extract_incremental = slow_extract
-        mock_memory.save_extraction = AsyncMock()
         p._memory = mock_memory
+        p._llm.last_compaction_summary = None
 
-        p._extract_memories_bg()
-        assert len(p._background_tasks) == 1
-
-        await p.shutdown()
+        p._handle_compaction_bg()
         assert len(p._background_tasks) == 0
 
 
@@ -1159,14 +1148,14 @@ class TestPipelineHassRouting:
 
 
 class TestShutdownFinalExtraction:
-    """shutdown() — best-effort final extraction after bg task cancellation."""
+    """shutdown() — best-effort shutdown summarization after bg task cancellation."""
 
-    async def test_shutdown_runs_final_extraction(self):
-        """shutdown() should attempt extraction after cancelling bg tasks."""
+    async def test_shutdown_runs_summarization(self):
         p = _make_pipeline()
         mock_memory = AsyncMock()
-        mock_memory.extract_incremental = AsyncMock(
-            return_value={"entities": [{"name": "X", "type": "person", "description": "test"}], "relationships": []}
+        mock_memory.generate_shutdown_summary = AsyncMock(return_value="Summary text")
+        mock_memory.extract_from_summary = AsyncMock(
+            return_value={"semantic": [], "episodic": None, "emotional": [], "procedural": []}
         )
         mock_memory.save_extraction = AsyncMock()
         mock_memory.close = AsyncMock()
@@ -1175,19 +1164,21 @@ class TestShutdownFinalExtraction:
 
         await p.shutdown()
 
-        mock_memory.extract_incremental.assert_awaited_once()
+        mock_memory.generate_shutdown_summary.assert_awaited_once()
+        mock_memory.extract_from_summary.assert_awaited_once_with("Summary text")
         mock_memory.save_extraction.assert_awaited_once()
 
-    async def test_shutdown_final_extraction_failure_does_not_block(self):
-        """Final extraction failure should not prevent shutdown."""
+    async def test_shutdown_skips_empty_summary(self):
         p = _make_pipeline()
         mock_memory = AsyncMock()
-        mock_memory.extract_incremental = AsyncMock(side_effect=Exception("boom"))
+        mock_memory.generate_shutdown_summary = AsyncMock(return_value="")
         mock_memory.close = AsyncMock()
         p._memory = mock_memory
         p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
 
-        await p.shutdown()  # should not raise
+        await p.shutdown()
+
+        mock_memory.extract_from_summary.assert_not_awaited()
 
 
 class TestCircuitBreaker:
