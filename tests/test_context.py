@@ -43,6 +43,21 @@ class TestContextManager:
         assert "cache_control" in blocks[1]
         assert "cache_control" not in blocks[2]
 
+    def test_build_system_blocks_default_channel_is_voice(self):
+        cm = ContextManager(persona_text="test persona", rag_context="")
+        blocks = cm.build_system_blocks()
+        assert "channel: voice" in blocks[2]["text"]
+
+    def test_build_system_blocks_chat_channel(self):
+        cm = ContextManager(persona_text="test persona", rag_context="", channel="chat")
+        blocks = cm.build_system_blocks()
+        assert "channel: chat" in blocks[2]["text"]
+
+    def test_build_system_blocks_voice_channel_explicit(self):
+        cm = ContextManager(persona_text="test persona", rag_context="", channel="voice")
+        blocks = cm.build_system_blocks()
+        assert "channel: voice" in blocks[2]["text"]
+
     def test_build_tools_without_hass_returns_web_search_only(self):
         cm = ContextManager(persona_text="test", rag_context="")
         tools = cm.build_tools()

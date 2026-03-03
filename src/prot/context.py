@@ -16,9 +16,10 @@ class ContextManager:
     blocks 1 and 2 can hit the prompt cache on subsequent requests.
     """
 
-    def __init__(self, persona_text: str, rag_context: str = "") -> None:
+    def __init__(self, persona_text: str, rag_context: str = "", channel: str = "voice") -> None:
         self._persona = persona_text
         self._rag_context = rag_context
+        self._channel = channel
         self._messages: list[dict] = []
 
     def build_system_blocks(self) -> list[dict]:
@@ -46,7 +47,8 @@ class ContextManager:
             "type": "text",
             "text": (
                 f"datetime: {datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"timezone: America/Vancouver"
+                f"timezone: America/Vancouver\n"
+                f"channel: {self._channel}"
             ),
         }
         return [block1_persona, block2_rag, block3_dynamic]
