@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from prot.engine import ConversationEngine
 from prot.state import State
 
 
@@ -34,11 +35,14 @@ def _make_pipeline():
     p._stt.send_audio = AsyncMock()
     p._stt.disconnect = AsyncMock()
 
-    # LLM
+    # LLM — mock with engine-required attributes
     p._llm = MagicMock()
-    p._llm.cancel = MagicMock()
+    p._llm.cancel = MagicMock(side_effect=lambda: setattr(p._llm, "_cancelled", True))
+    p._llm._cancelled = False
     p._llm.close = AsyncMock()
     p._llm.get_tool_use_blocks = MagicMock(return_value=[])
+    p._llm.last_response_content = None
+    p._llm.last_compaction_summary = None
 
     # TTS
     p._tts = MagicMock()
@@ -60,6 +64,9 @@ def _make_pipeline():
     p._ctx.build_tools = MagicMock(return_value=[])
     p._ctx.update_rag_context = MagicMock()
 
+    # Engine — real engine wrapping mocked ctx and llm
+    p._engine = ConversationEngine(ctx=p._ctx, llm=p._llm)
+
     # Optional components (may not be available)
     p._memory = None
     p._graphrag = None
@@ -80,8 +87,6 @@ def _make_pipeline():
     p._speaking_since = 0.0
     p._barge_in_grace = 1.5
     p._background_tasks = set()
-    p._consecutive_errors = 0
-    p._error_backoff = 0.0
 
     return p
 
@@ -182,6 +187,17 @@ class TestHandleUtteranceEnd:
         # Should not transition or call _process_response with empty transcript
         p._process_response.assert_not_awaited()
 
+    async def test_delegates_user_message_to_engine(self):
+        """_handle_utterance_end uses engine.add_user_message, not ctx directly."""
+        p = _make_pipeline()
+        p._sm.on_speech_detected()
+        p._current_transcript = "test message"
+        p._process_response = AsyncMock()
+
+        await p._handle_utterance_end()
+        # The engine should have added the user message to ctx
+        p._ctx.add_message.assert_called_once_with("user", "test message")
+
 
 class TestOnAudioChunk:
     """on_audio_chunk() — forwards audio to STT when LISTENING."""
@@ -222,9 +238,9 @@ class TestOnAudioChunk:
 
 
 class TestHandleBargeIn:
-    """_handle_barge_in() — cancels LLM, flushes TTS, kills player, reconnects STT."""
+    """_handle_barge_in() — cancels engine, flushes TTS, kills player, reconnects STT."""
 
-    async def test_cancels_llm(self):
+    async def test_cancels_engine(self):
         p = _make_pipeline()
         # Get to INTERRUPTED state
         p._sm.on_speech_detected()
@@ -391,6 +407,7 @@ class TestProcessResponse:
             yield "Hello world."
 
         p._llm.stream_response = fake_stream
+        p._llm.last_response_content = "Hello world."
 
         # TTS yields audio bytes
         async def fake_tts(text):
@@ -447,7 +464,7 @@ class TestProcessResponse:
 
 
 class TestSilencePadding:
-    """_produce() — inter-sentence silence padding."""
+    """tts_producer() — inter-sentence silence padding."""
 
     async def test_silence_between_sentences(self):
         """Two sentences should have a silence buffer between them."""
@@ -459,6 +476,7 @@ class TestSilencePadding:
             yield "First sentence. Second sentence."
 
         p._llm.stream_response = fake_stream
+        p._llm.last_response_content = "First sentence. Second sentence."
 
         tts_call_count = 0
 
@@ -505,6 +523,7 @@ class TestSilencePadding:
             yield "First sentence. Second sentence."
 
         p._llm.stream_response = fake_stream
+        p._llm.last_response_content = "First sentence. Second sentence."
 
         async def fake_tts(text):
             yield b"\xaa" * 100
@@ -530,152 +549,11 @@ class TestSilencePadding:
         assert len(played_chunks) == 2
 
 
-class TestResponseContentRouting:
-    """_process_response() uses last_response_content for context, plain text for DB."""
-
-    async def test_context_gets_response_content_blocks(self):
-        """Context should receive full response content (with compaction blocks)."""
-        p = _make_pipeline()
-        p._sm.on_speech_detected()
-        p._sm.on_utterance_complete()
-
-        async def fake_stream(*a, **kw):
-            yield "Hello."
-
-        p._llm.stream_response = fake_stream
-        mock_content = [MagicMock(text="Hello.")]
-        p._llm.last_response_content = mock_content
-
-        async def fake_tts(text):
-            yield b"\x00" * 100
-
-        p._tts.stream_audio = fake_tts
-
-        with patch("prot.pipeline.settings") as mock_settings:
-            mock_settings.claude_model = "test"
-            mock_settings.active_timeout = 999
-            mock_settings.tts_sentence_silence_ms = 0
-            mock_settings.elevenlabs_output_format = "pcm_24000"
-            await p._process_response()
-
-        # Context should receive the content blocks, not plain text
-        p._ctx.add_message.assert_called_once_with("assistant", mock_content)
-
-    async def test_db_save_gets_plain_text(self):
-        """DB save should receive plain text, not content blocks."""
-        p = _make_pipeline()
-        p._sm.on_speech_detected()
-        p._sm.on_utterance_complete()
-        p._graphrag = AsyncMock()
-        p._graphrag.save_message = AsyncMock()
-
-        async def fake_stream(*a, **kw):
-            yield "Hello."
-
-        p._llm.stream_response = fake_stream
-        p._llm.last_response_content = [MagicMock(text="Hello.")]
-
-        async def fake_tts(text):
-            yield b"\x00" * 100
-
-        p._tts.stream_audio = fake_tts
-
-        with patch("prot.pipeline.settings") as mock_settings:
-            mock_settings.claude_model = "test"
-            mock_settings.active_timeout = 999
-            mock_settings.tts_sentence_silence_ms = 0
-            mock_settings.elevenlabs_output_format = "pcm_24000"
-            await p._process_response()
-
-        # DB save should receive plain text
-        assert len(p._background_tasks) >= 0  # task may have completed
-        # Verify _save_message_bg was called — check ctx.add_message got blocks
-        # while the graphrag save got text
-        ctx_call = p._ctx.add_message.call_args
-        assert isinstance(ctx_call[0][1], list)  # content blocks
-
-    async def test_context_falls_back_to_text_without_response_content(self):
-        """When last_response_content is None, context gets plain text."""
-        p = _make_pipeline()
-        p._sm.on_speech_detected()
-        p._sm.on_utterance_complete()
-
-        async def fake_stream(*a, **kw):
-            yield "Fallback."
-
-        p._llm.stream_response = fake_stream
-        p._llm.last_response_content = None
-
-        async def fake_tts(text):
-            yield b"\x00" * 100
-
-        p._tts.stream_audio = fake_tts
-
-        with patch("prot.pipeline.settings") as mock_settings:
-            mock_settings.claude_model = "test"
-            mock_settings.active_timeout = 999
-            mock_settings.tts_sentence_silence_ms = 0
-            mock_settings.elevenlabs_output_format = "pcm_24000"
-            await p._process_response()
-
-        p._ctx.add_message.assert_called_once_with("assistant", "Fallback.")
-
-
-class TestCompactionHandler:
-    """_handle_compaction_bg() — compaction-driven memory extraction."""
-
-    async def test_compaction_triggers_memory_extraction(self):
-        p = _make_pipeline()
-        mock_memory = AsyncMock()
-        mock_memory.extract_from_summary = AsyncMock(
-            return_value={"semantic": [], "episodic": None, "emotional": [], "procedural": []}
-        )
-        mock_memory.save_extraction = AsyncMock()
-        p._memory = mock_memory
-        p._llm.last_compaction_summary = "User discussed coding."
-
-        p._handle_compaction_bg()
-        assert len(p._background_tasks) == 1
-        await asyncio.sleep(0.05)
-
-        mock_memory.extract_from_summary.assert_awaited_once_with("User discussed coding.")
-
-    async def test_no_compaction_no_extraction(self):
-        p = _make_pipeline()
-        mock_memory = AsyncMock()
-        p._memory = mock_memory
-        p._llm.last_compaction_summary = None
-
-        p._handle_compaction_bg()
-        assert len(p._background_tasks) == 0
-
-
-class TestSaveMessageBg:
-    """_save_message_bg() — persists messages to DB in background."""
-
-    async def test_save_message_bg_creates_tracked_task(self):
-        """_save_message_bg() should create a background task tracked for cleanup."""
-        p = _make_pipeline()
-        p._graphrag = AsyncMock()
-        p._graphrag.save_message = AsyncMock()
-        p._save_message_bg("user", "test message")
-        assert len(p._background_tasks) == 1
-        await asyncio.sleep(0.05)
-        assert len(p._background_tasks) == 0
-
-    async def test_save_message_bg_noop_without_graphrag(self):
-        """_save_message_bg() should be a no-op without graphrag."""
-        p = _make_pipeline()
-        p._graphrag = None
-        p._save_message_bg("user", "test")
-        assert len(p._background_tasks) == 0
-
-
 class TestToolUseHandling:
-    """_process_response() — tool use loop execution."""
+    """_process_response() with engine — tool use loop execution."""
 
     async def test_tool_use_executes_and_loops(self):
-        """When LLM returns tool_use, pipeline executes tool and calls LLM again."""
+        """When LLM returns tool_use, engine executes tool and calls LLM again."""
         p = _make_pipeline()
         p._sm.on_speech_detected()
         p._sm.on_utterance_complete()
@@ -710,6 +588,7 @@ class TestToolUseHandling:
         mock_agent = AsyncMock()
         mock_agent.request = AsyncMock(return_value="done")
         p._hass_agent = mock_agent
+        p._engine._hass_agent = mock_agent
 
         p._llm.last_response_content = [MagicMock(type="text")]
 
@@ -765,6 +644,7 @@ class TestToolUseHandling:
         mock_agent = AsyncMock()
         mock_agent.request = AsyncMock(side_effect=RuntimeError("HASS down"))
         p._hass_agent = mock_agent
+        p._engine._hass_agent = mock_agent
 
         p._llm.last_response_content = [MagicMock(type="text")]
 
@@ -781,7 +661,7 @@ class TestToolUseHandling:
             await p._process_response()
 
         assert call_count == 2
-        # Tool result with error should have been added to context
+        # Tool result with error should have been added to context via engine
         user_calls = [c for c in p._ctx.add_message.call_args_list if c[0][0] == "user"]
         assert len(user_calls) >= 1
         tool_result = user_calls[0][0][1]
@@ -813,114 +693,6 @@ class TestStreamResponseResetContent:
 
         # Should be reset to None, not stale tool_use blocks
         assert client._last_response_content is None
-
-
-class TestToolLoopExhaustion:
-    """_process_response() — tool loop hits max iterations without deadlock."""
-
-    async def test_all_iterations_receive_tools(self):
-        """All iterations receive the same tools list (no stripping)."""
-        p = _make_pipeline()
-        p._sm.on_speech_detected()
-        p._sm.on_utterance_complete()
-
-        captured_tools = []
-
-        async def fake_stream(system, tools, messages):
-            captured_tools.append(tools)
-            yield "Response."
-
-        p._llm.stream_response = fake_stream
-
-        tool_block = MagicMock()
-        tool_block.type = "tool_use"
-        tool_block.name = "hass_request"
-        tool_block.id = "tool_exhaust"
-        tool_block.input = {"command": "거실 조명 켜줘"}
-
-        call_count = 0
-
-        def fake_get_tool():
-            nonlocal call_count
-            call_count += 1
-            # Return tool blocks for first 2 calls, empty on 3rd
-            return [tool_block] if call_count < 3 else []
-
-        p._llm.get_tool_use_blocks = fake_get_tool
-
-        mock_agent = AsyncMock()
-        mock_agent.request = AsyncMock(return_value="done")
-        p._hass_agent = mock_agent
-
-        p._llm.last_response_content = [MagicMock(type="text")]
-
-        async def fake_tts(text):
-            yield b"\x00" * 100
-
-        p._tts.stream_audio = fake_tts
-
-        with patch("prot.pipeline.settings") as ms:
-            ms.claude_model = "test"
-            ms.active_timeout = 999
-            ms.tts_sentence_silence_ms = 0
-            ms.elevenlabs_output_format = "pcm_24000"
-            await p._process_response()
-
-        assert len(captured_tools) == 3
-        assert captured_tools[0] is not None  # iteration 0: tools passed
-        assert captured_tools[1] is not None  # iteration 1: tools passed
-        assert captured_tools[2] is not None  # iteration 2: tools still passed
-        assert p._sm.state == State.ACTIVE    # not stuck in PROCESSING
-
-
-class TestInterruptionDuringToolExec:
-    """_process_response() — barge-in during tool execution bails cleanly."""
-
-    async def test_bails_out_when_interrupted_during_tool_exec(self):
-        """When barge-in fires during tool execution, pipeline exits without ValueError."""
-        p = _make_pipeline()
-        p._sm.on_speech_detected()
-        p._sm.on_utterance_complete()
-
-        async def fake_stream(*a, **kw):
-            yield "Checking."
-
-        p._llm.stream_response = fake_stream
-
-        tool_block = MagicMock()
-        tool_block.type = "tool_use"
-        tool_block.name = "hass_request"
-        tool_block.id = "tool_int"
-        tool_block.input = {"command": "거실 조명 켜줘"}
-
-        p._llm.get_tool_use_blocks = MagicMock(return_value=[tool_block])
-
-        async def fake_request(command):
-            # Simulate barge-in during tool execution
-            p._sm.on_speech_detected()    # SPEAKING -> INTERRUPTED
-            p._sm.on_interrupt_handled()  # INTERRUPTED -> LISTENING
-            return "done"
-
-        mock_agent = AsyncMock()
-        mock_agent.request = fake_request
-        p._hass_agent = mock_agent
-
-        p._llm.last_response_content = [MagicMock(type="text")]
-
-        async def fake_tts(text):
-            yield b"\x00" * 100
-
-        p._tts.stream_audio = fake_tts
-
-        with patch("prot.pipeline.settings") as ms:
-            ms.claude_model = "test"
-            ms.active_timeout = 999
-            ms.tts_sentence_silence_ms = 0
-            ms.elevenlabs_output_format = "pcm_24000"
-            await p._process_response()
-
-        # Should have bailed out; state managed by barge-in handler
-        assert p._sm.state == State.LISTENING
 
 
 class TestExceptionRecovery:
@@ -1069,7 +841,7 @@ class TestPreBuffer:
 
 class TestPipelineHassRouting:
     async def test_hass_tool_routed_to_agent(self):
-        """hass_request tool calls are routed through _hass_agent."""
+        """hass_request tool calls are routed through engine's _hass_agent."""
         p = _make_pipeline()
         p._sm.on_speech_detected()
         p._sm.on_utterance_complete()
@@ -1077,6 +849,7 @@ class TestPipelineHassRouting:
         mock_agent = AsyncMock()
         mock_agent.request = AsyncMock(return_value="조명을 켰습니다")
         p._hass_agent = mock_agent
+        p._engine._hass_agent = mock_agent
 
         call_count = 0
 
@@ -1118,13 +891,14 @@ class TestPipelineHassRouting:
         mock_agent.request.assert_awaited_once_with("거실 조명 켜줘")
 
     async def test_build_tools_called_with_agent(self):
-        """build_tools receives hass_agent parameter."""
+        """build_tools receives hass_agent parameter via engine."""
         p = _make_pipeline()
         p._sm.on_speech_detected()
         p._sm.on_utterance_complete()
 
         mock_agent = MagicMock()
         p._hass_agent = mock_agent
+        p._engine._hass_agent = mock_agent
 
         async def fake_stream(*a, **kw):
             yield "Hello."
@@ -1148,9 +922,9 @@ class TestPipelineHassRouting:
 
 
 class TestShutdownFinalExtraction:
-    """shutdown() — best-effort shutdown summarization after bg task cancellation."""
+    """shutdown() — delegates shutdown summarization to engine."""
 
-    async def test_shutdown_runs_summarization(self):
+    async def test_shutdown_runs_summarization_via_engine(self):
         p = _make_pipeline()
         mock_memory = AsyncMock()
         mock_memory.generate_shutdown_summary = AsyncMock(return_value="Summary text")
@@ -1160,6 +934,7 @@ class TestShutdownFinalExtraction:
         mock_memory.save_extraction = AsyncMock()
         mock_memory.close = AsyncMock()
         p._memory = mock_memory
+        p._engine._memory = mock_memory
         p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
 
         await p.shutdown()
@@ -1168,95 +943,24 @@ class TestShutdownFinalExtraction:
         mock_memory.extract_from_summary.assert_awaited_once_with("Summary text")
         mock_memory.save_extraction.assert_awaited_once()
 
-    async def test_shutdown_skips_empty_summary(self):
+    async def test_shutdown_skips_without_memory(self):
         p = _make_pipeline()
-        mock_memory = AsyncMock()
-        mock_memory.generate_shutdown_summary = AsyncMock(return_value="")
-        mock_memory.close = AsyncMock()
-        p._memory = mock_memory
-        p._ctx.get_messages.return_value = [{"role": "user", "content": "hello"}]
+        p._memory = None
+        p._engine._memory = None
+        p._tts.close = AsyncMock()
 
-        await p.shutdown()
-
-        mock_memory.extract_from_summary.assert_not_awaited()
+        await p.shutdown()  # should not raise
 
 
-class TestCircuitBreaker:
-    """Consecutive LLM failures trigger exponential backoff."""
+class TestPipelineUsesEngine:
+    """Pipeline creates and uses a ConversationEngine."""
 
-    async def test_increments_consecutive_errors(self):
+    async def test_has_engine_attribute(self):
         p = _make_pipeline()
+        assert hasattr(p, "_engine")
+        assert isinstance(p._engine, ConversationEngine)
 
-        async def failing_stream(*a, **kw):
-            raise RuntimeError("API down")
-            yield  # pragma: no cover — makes it an async generator
-
-        p._llm.stream_response = failing_stream
-        p._llm.last_response_content = None
-
-        with patch("prot.pipeline.settings") as ms:
-            ms.claude_model = "test"
-            ms.active_timeout = 999
-            ms.tts_sentence_silence_ms = 0
-            ms.elevenlabs_output_format = "pcm_24000"
-
-            for i in range(3):
-                p._sm.on_speech_detected()
-                p._sm.on_utterance_complete()
-                await p._process_response()
-
-        assert p._consecutive_errors == 3
-        assert p._error_backoff > 0
-
-    async def test_backoff_resets_on_success(self):
+    async def test_engine_shares_llm_and_ctx(self):
         p = _make_pipeline()
-        p._consecutive_errors = 3
-        p._error_backoff = 5.0
-
-        async def ok_stream(*a, **kw):
-            yield "Hi."
-
-        p._llm.stream_response = ok_stream
-        p._llm.last_response_content = "Hi."
-
-        async def fake_tts(text):
-            yield b"\x00" * 100
-
-        p._tts.stream_audio = fake_tts
-
-        p._sm.on_speech_detected()
-        p._sm.on_utterance_complete()
-
-        with patch("prot.pipeline.settings") as ms:
-            ms.claude_model = "test"
-            ms.active_timeout = 999
-            ms.tts_sentence_silence_ms = 0
-            ms.elevenlabs_output_format = "pcm_24000"
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                await p._process_response()
-
-        assert p._consecutive_errors == 0
-        assert p._error_backoff == 0.0
-
-    async def test_backoff_caps_at_max(self):
-        p = _make_pipeline()
-        p._consecutive_errors = 10
-        p._error_backoff = 0.0
-
-        async def failing_stream(*a, **kw):
-            raise RuntimeError("API down")
-            yield  # pragma: no cover
-
-        p._llm.stream_response = failing_stream
-
-        p._sm.on_speech_detected()
-        p._sm.on_utterance_complete()
-
-        with patch("prot.pipeline.settings") as ms:
-            ms.claude_model = "test"
-            ms.active_timeout = 999
-            ms.tts_sentence_silence_ms = 0
-            ms.elevenlabs_output_format = "pcm_24000"
-            await p._process_response()
-
-        assert p._error_backoff <= 30.0
+        assert p._engine._llm is p._llm
+        assert p._engine._ctx is p._ctx

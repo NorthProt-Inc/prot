@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from prot.config import settings
 from prot.context import ContextManager
+from prot.engine import ConversationEngine, ToolIterationMarker
 from prot.llm import LLMClient
 from prot.persona import load_persona
 from prot.playback import AudioPlayer
@@ -41,6 +42,7 @@ class Pipeline:
         self._tts = TTSClient()
         self._player = AudioPlayer()
         self._ctx = ContextManager(persona_text=load_persona())
+        self._engine = ConversationEngine(ctx=self._ctx, llm=self._llm)
         # Optional components — initialized in startup()
         self._memory = None
         self._graphrag = None
@@ -60,8 +62,6 @@ class Pipeline:
         self._speaking_since: float = 0.0  # monotonic time when SPEAKING entered
         self._barge_in_grace: float = 1.5  # seconds to ignore VAD after SPEAKING starts
         self._background_tasks: set[asyncio.Task] = set()
-        self._consecutive_errors: int = 0
-        self._error_backoff: float = 0.0
 
     @property
     def state(self) -> StateMachine:
@@ -108,6 +108,11 @@ class Pipeline:
             )
         except Exception:
             logger.warning("Memory subsystem not available")
+
+        # Wire optional resources into the engine
+        self._engine._hass_agent = self._hass_agent
+        self._engine._memory = self._memory
+        self._engine._graphrag = self._graphrag
 
         # Pre-warm TTS connection pool
         try:
@@ -217,210 +222,144 @@ class Pipeline:
         self._pending_audio.clear()
         await self._stt.disconnect()
 
-        self._ctx.add_message("user", self._current_transcript)
-        self._save_message_bg("user", self._current_transcript)
+        self._engine.add_user_message(self._current_transcript)
         await self._process_response()
-
-    _MAX_TOOL_ITERATIONS = 3
-    _MAX_CONSECUTIVE_ERRORS = 3
-    _MAX_BACKOFF_SECONDS = 30.0
 
     @logged(slow_ms=2000)
     async def _process_response(self) -> None:
-        """Stream LLM -> TTS -> playback with producer-consumer pipeline.
+        """Voice: consume engine generator with concurrent TTS pipeline."""
+        text_q: asyncio.Queue[str | None] = asyncio.Queue()
+        audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
+        tts_started = False
 
-        Supports agentic tool loop: if the LLM returns tool_use blocks,
-        tools are executed and results fed back for up to _MAX_TOOL_ITERATIONS.
-        """
-        if self._error_backoff > 0:
-            logger.warning("Error backoff", delay=self._error_backoff,
-                           consecutive_errors=self._consecutive_errors)
-            await asyncio.sleep(self._error_backoff)
+        sample_rate = int(settings.elevenlabs_output_format.split("_")[1])
+        silence_ms = settings.tts_sentence_silence_ms
+        silence = (
+            b"\x00" * (int(sample_rate * silence_ms / 1000) * 2)
+            if silence_ms > 0
+            else b""
+        )
 
-        system_blocks = self._ctx.build_system_blocks()
-        tools = self._ctx.build_tools(hass_agent=self._hass_agent)
-
-        try:
-            for iteration in range(self._MAX_TOOL_ITERATIONS):
-                messages = self._ctx.get_recent_messages()
-
-                _response_parts: list[str] = []
-                buffer = ""
-                audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=32)
-                _last_pressure_log: float = 0.0
-
-                async def _produce() -> None:
-                    nonlocal buffer, _last_pressure_log
-                    _tts_rate = int(settings.elevenlabs_output_format.split("_")[1])
-                    _silence_ms = settings.tts_sentence_silence_ms
-                    _silence = (
-                        b"\x00" * (int(_tts_rate * _silence_ms / 1000) * 2)
-                        if _silence_ms > 0
-                        else b""
-                    )
-                    try:
-                        async for chunk in self._llm.stream_response(
-                            system_blocks, tools, messages
-                        ):
-                            if self._sm.state == State.INTERRUPTED:
-                                break
-                            _response_parts.append(chunk)
-                            buffer += chunk
-                            sentences, buffer = chunk_sentences(buffer)
-                            for sentence in sentences:
-                                clean = sanitize_for_tts(sentence)
-                                if not clean:
-                                    continue
-                                async for audio in self._tts.stream_audio(clean):
-                                    if self._sm.state == State.INTERRUPTED:
-                                        return
-                                    await audio_q.put(audio)
-                                    qsz = audio_q.qsize()
-                                    now = time.monotonic()
-                                    if qsz >= 28 and now - _last_pressure_log >= 5.0:
-                                        logger.debug("Queue pressure", qsize=qsz)
-                                        _last_pressure_log = now
-                                if _silence and self._sm.state != State.INTERRUPTED:
-                                    await audio_q.put(_silence)
-                        # Flush remaining
-                        if buffer.strip() and self._sm.state != State.INTERRUPTED:
-                            clean = sanitize_for_tts(buffer)
-                            if clean:
-                                async for audio in self._tts.stream_audio(clean):
-                                    if self._sm.state == State.INTERRUPTED:
-                                        return
-                                    await audio_q.put(audio)
-                    finally:
-                        await audio_q.put(None)  # sentinel
-
-                async def _consume() -> None:
-                    first_chunk = True
-                    while True:
-                        data = await audio_q.get()
-                        if data is None:
-                            break
+        async def tts_producer() -> None:
+            """text_q -> TTS -> audio_q (runs concurrently with engine)."""
+            buffer = ""
+            while True:
+                chunk = await text_q.get()
+                if chunk is None:
+                    break
+                if self._sm.state == State.INTERRUPTED:
+                    break
+                buffer += chunk
+                sentences, buffer = chunk_sentences(buffer)
+                for sentence in sentences:
+                    clean = sanitize_for_tts(sentence)
+                    if not clean:
+                        continue
+                    async for audio in self._tts.stream_audio(clean):
+                        if self._sm.state == State.INTERRUPTED:
+                            await audio_q.put(None)
+                            return
+                        await audio_q.put(audio)
+                    if silence:
+                        await audio_q.put(silence)
+            # Flush remaining buffer
+            if buffer.strip():
+                clean = sanitize_for_tts(buffer)
+                if clean:
+                    async for audio in self._tts.stream_audio(clean):
                         if self._sm.state == State.INTERRUPTED:
                             break
-                        if first_chunk:
-                            self._speaking_since = time.monotonic()
-                            first_chunk = False
-                        await self._player.play_chunk(data)
+                        await audio_q.put(audio)
+            await audio_q.put(None)
 
-                logger.info("LLM streaming", model=settings.claude_model, iteration=iteration)
+        async def audio_consumer() -> None:
+            """audio_q -> player."""
+            first_chunk = True
+            while True:
+                data = await audio_q.get()
+                if data is None:
+                    break
+                if self._sm.state == State.INTERRUPTED:
+                    break
+                if first_chunk:
+                    self._speaking_since = time.monotonic()
+                    first_chunk = False
+                await self._player.play_chunk(data)
 
-                # [FIX 2] Guard: bail if state changed (e.g. barge-in during previous tool exec)
-                if self._sm.state != State.PROCESSING:
-                    logger.info("State changed before TTS start",
-                                iteration=iteration, state=self._sm.state.value)
+        tts_task = asyncio.create_task(tts_producer())
+        consumer_task = asyncio.create_task(audio_consumer())
+
+        try:
+            async for item in self._engine.respond():
+                if isinstance(item, ToolIterationMarker):
+                    # Flush TTS pipeline, transition state
+                    await text_q.put(None)
+                    await tts_task
+                    await audio_q.put(None)
+                    await consumer_task
+                    if tts_started and self._sm.state == State.SPEAKING:
+                        self._sm.on_tool_iteration()
+                    tts_started = False
+                    # Restart TTS pipeline for next iteration
+                    text_q = asyncio.Queue()
+                    audio_q = asyncio.Queue(maxsize=32)
+                    tts_task = asyncio.create_task(tts_producer())
+                    consumer_task = asyncio.create_task(audio_consumer())
+                    continue
+
+                # Text chunk — check for interruption
+                if self._sm.state == State.INTERRUPTED:
+                    self._engine.cancel()
+                    break
+
+                if not tts_started:
+                    self._sm.on_tts_started()
+                    await self._player.start()
+                    tts_started = True
+
+                await text_q.put(item)
+
+            # Signal end of text
+            await text_q.put(None)
+            await tts_task
+            await consumer_task
+
+            result = self._engine.last_result
+            if result and not result.interrupted and tts_started:
+                await self._player.finish()
+                if self._sm.try_on_tts_complete():
                     reset_turn()
-                    return
-
-                self._sm.on_tts_started()  # PROCESSING -> SPEAKING
-                await self._player.start()
-
-                prod = asyncio.create_task(_produce())
-                cons = asyncio.create_task(_consume())
-                done, pending = await asyncio.wait(
-                    [prod, cons], return_when=asyncio.FIRST_EXCEPTION,
-                )
-                for t in pending:
-                    t.cancel()
-                for t in done:
-                    t.result()  # re-raise exceptions
-
-                if self._sm.state != State.INTERRUPTED:
-                    await self._player.finish()
-
-                # Check for tool use
-                tool_blocks = self._llm.get_tool_use_blocks()
-
-                if not tool_blocks:
-                    # Normal completion — no tools
-                    if self._sm.try_on_tts_complete():
-                        full_text = self._commit_assistant_response(_response_parts)
-                        logger.info("Response done", chars=len(full_text))
-                        self._consecutive_errors = 0
-                        self._error_backoff = 0.0
-                        reset_turn()
-                        self._start_active_timeout()
-                        self._handle_compaction_bg()
-                    else:
-                        # [FIX 3] Interrupted without tools — clean up turn timer
-                        logger.info("Response interrupted", state=self._sm.state.value)
-                        reset_turn()
-                    return
-
-                # Tool use detected — execute and loop
-                logger.info("Tool use", count=len(tool_blocks), iteration=iteration)
-                full_text = self._commit_assistant_response(_response_parts)
-
-                tool_results = []
-                for block in tool_blocks:
-                    try:
-                        if block.name == "hass_request" and self._hass_agent:
-                            result = await self._hass_agent.request(block.input["command"])
-                        else:
-                            logger.warning("Unknown tool", tool=block.name)
-                            result = {"error": f"Unknown tool: {block.name}"}
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": str(result),
-                        })
-                    except Exception as exc:
-                        logger.warning("Tool failed", tool=block.name, error=str(exc))
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": str(exc),
-                            "is_error": True,
-                        })
-
-                self._ctx.add_message("user", tool_results)
-
-                # [FIX 4] Guard: bail if barge-in happened during tool execution
-                if self._sm.state != State.SPEAKING:
-                    logger.info("Interrupted during tool execution",
-                                iteration=iteration, state=self._sm.state.value)
+                    self._start_active_timeout()
+                else:
                     reset_turn()
-                    return
-
-                self._sm.on_tool_iteration()  # SPEAKING -> PROCESSING
-
-            # [FIX 5] Defense-in-depth: for loop exhausted without returning
-            # Should not reach here with tool stripping, but guard against it
-            logger.error("Tool loop fell through without resolution")
-            reset_turn()
-            if self._sm.state in (State.PROCESSING, State.SPEAKING):
-                self._sm.force_recovery(State.ACTIVE)
-                self._start_active_timeout()
+            else:
+                reset_turn()
 
         except Exception:
-            logger.exception("Error in _process_response")
-            self._consecutive_errors += 1
-            if self._consecutive_errors >= self._MAX_CONSECUTIVE_ERRORS:
-                self._error_backoff = min(
-                    self._MAX_BACKOFF_SECONDS,
-                    5.0 * 2 ** (self._consecutive_errors - self._MAX_CONSECUTIVE_ERRORS),
-                )
-                logger.error("Circuit breaker active",
-                             consecutive_errors=self._consecutive_errors,
-                             backoff=self._error_backoff)
+            logger.exception("_process_response failed")
             try:
                 await self._player.kill()
             except Exception:
                 pass
-            # [FIX 6] State-aware recovery — only force ACTIVE from stuck states
-            reset_turn()
+            await text_q.put(None)
+            await audio_q.put(None)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(tts_task, consumer_task, return_exceptions=True),
+                    timeout=1.0,
+                )
+            except asyncio.TimeoutError:
+                tts_task.cancel()
+                consumer_task.cancel()
             if self._sm.state in (State.PROCESSING, State.SPEAKING):
                 self._sm.force_recovery(State.ACTIVE)
-                self._start_active_timeout()
+            reset_turn()
 
     @logged(slow_ms=200)
     async def _handle_barge_in(self) -> None:
         """User interrupted during TTS — cancel everything, reconnect STT."""
         logger.info("Interrupting", state=self._sm.state.value)
-        self._llm.cancel()
+        self._engine.cancel()
         self._tts.flush()
         await self._player.kill()
         self._sm.on_interrupt_handled()
@@ -454,50 +393,6 @@ class Pipeline:
         task.add_done_callback(self._background_tasks.discard)
         return task
 
-    def _handle_compaction_bg(self) -> None:
-        """Process compaction summary for memory extraction."""
-        if not self._memory:
-            return
-        summary = self._llm.last_compaction_summary
-        if not summary:
-            return
-        query = self._current_transcript
-
-        async def _process():
-            try:
-                extraction = await self._memory.extract_from_summary(summary)
-                await self._memory.save_extraction(extraction)
-                if query:
-                    rag = await self._memory.pre_load_context(query)
-                    self._ctx.update_rag_context(rag)
-            except Exception:
-                logger.warning("Compaction memory extraction failed", exc_info=True)
-
-        self._bg(_process())
-
-    def _commit_assistant_response(self, parts: list[str]) -> str:
-        """Join response parts, store in context and conversation log."""
-        full_text = "".join(parts)
-        content = self._llm.last_response_content
-        self._ctx.add_message("assistant", content or full_text)
-        self._save_message_bg("assistant", full_text)
-        return full_text
-
-    def _save_message_bg(self, role: str, content: str) -> None:
-        """Persist a conversation message to DB in the background."""
-        if not self._graphrag:
-            return
-
-        async def _save() -> None:
-            try:
-                await self._graphrag.save_message(
-                    self._conversation_id, role, content
-                )
-            except Exception:
-                logger.debug("Message save failed", exc_info=True)
-
-        self._bg(_save())
-
     def diagnostics(self) -> dict:
         """Return runtime diagnostics for monitoring."""
         diag = {
@@ -525,24 +420,20 @@ class Pipeline:
                 pass
             self._active_timeout_task = None
 
-        # Cancel background tasks before final extraction (prevent race condition)
+        # Cancel pipeline's own background tasks
         for task in self._background_tasks:
             task.cancel()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
         self._background_tasks.clear()
 
-        # Best-effort shutdown summarization (must run before closing components)
-        if self._memory:
-            try:
-                messages = self._ctx.get_messages()
-                if messages:
-                    summary = await self._memory.generate_shutdown_summary(messages)
-                    if summary:
-                        extraction = await self._memory.extract_from_summary(summary)
-                        await self._memory.save_extraction(extraction)
-            except Exception:
-                logger.debug("Shutdown memory extraction failed", exc_info=True)
+        # Best-effort shutdown summarization via engine
+        await self._engine.shutdown_summarize()
+        for task in self._engine._background_tasks:
+            task.cancel()
+        if self._engine._background_tasks:
+            await asyncio.gather(*self._engine._background_tasks, return_exceptions=True)
+        self._engine._background_tasks.clear()
 
         closeables = [
             self._llm.close,
