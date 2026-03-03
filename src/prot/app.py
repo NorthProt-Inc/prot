@@ -11,7 +11,9 @@ from starlette.middleware.cors import CORSMiddleware
 
 from prot.audio import AudioManager
 from prot.config import settings
-from prot.engine import BusyError, ToolIterationMarker
+from prot.context import ContextManager
+from prot.engine import BusyError, ConversationEngine, ToolIterationMarker
+from prot.persona import load_persona
 from prot.logging import get_logger, setup_logging
 from prot.pipeline import Pipeline
 
@@ -99,14 +101,22 @@ async def memory_stats():
 
 @app.websocket("/chat")
 async def chat_ws(websocket: WebSocket):
-    """Text chat via shared ConversationEngine."""
+    """Text chat with per-connection ConversationEngine."""
     await websocket.accept()
     if not pipeline:
         await websocket.send_json({"type": "error", "message": "Server not ready"})
         await websocket.close()
         return
 
-    engine = pipeline._engine
+    # Chat gets its own context with channel="chat"
+    ctx = ContextManager(persona_text=load_persona(), channel="chat")
+    engine = ConversationEngine(
+        ctx=ctx,
+        llm=pipeline._llm,
+        hass_agent=pipeline._hass_agent,
+        memory=pipeline._memory,
+        graphrag=pipeline._graphrag,
+    )
     try:
         while True:
             data = await websocket.receive_json()
@@ -127,7 +137,7 @@ async def chat_ws(websocket: WebSocket):
                 )
             except BusyError:
                 await websocket.send_json(
-                    {"type": "error", "message": "Engine is busy (voice active)"}
+                    {"type": "error", "message": "Still processing previous message"}
                 )
             except Exception as exc:
                 logger.exception("Chat respond error")
@@ -138,3 +148,6 @@ async def chat_ws(websocket: WebSocket):
         logger.info("Chat WebSocket disconnected")
     except Exception:
         logger.exception("Chat WebSocket error")
+    finally:
+        # Extract memories from chat session before cleanup
+        await engine.shutdown_summarize()

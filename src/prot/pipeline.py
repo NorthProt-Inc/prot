@@ -41,7 +41,7 @@ class Pipeline:
         self._llm = LLMClient()
         self._tts = TTSClient()
         self._player = AudioPlayer()
-        self._ctx = ContextManager(persona_text=load_persona())
+        self._ctx = ContextManager(persona_text=load_persona(), channel="voice")
         self._engine = ConversationEngine(ctx=self._ctx, llm=self._llm)
         # Optional components — initialized in startup()
         self._memory = None

@@ -64,6 +64,7 @@ class TestChatWebSocket:
         mock_engine = MagicMock(spec=ConversationEngine)
         mock_engine.busy = False
         mock_engine.add_user_message = MagicMock()
+        mock_engine.shutdown_summarize = AsyncMock()
         mock_engine.last_result = ResponseResult(
             full_text="Hello world", interrupted=False
         )
@@ -77,7 +78,10 @@ class TestChatWebSocket:
         mock_pipeline = MagicMock()
         mock_pipeline.startup = AsyncMock()
         mock_pipeline.shutdown = AsyncMock()
-        mock_pipeline._engine = mock_engine
+        mock_pipeline._llm = MagicMock()
+        mock_pipeline._hass_agent = None
+        mock_pipeline._memory = None
+        mock_pipeline._graphrag = None
         mock_pipeline.current_state = "idle"
 
         mock_audio = MagicMock()
@@ -85,7 +89,9 @@ class TestChatWebSocket:
         mock_audio.stop = MagicMock()
 
         with patch("prot.app.Pipeline", return_value=mock_pipeline), \
-             patch("prot.app.AudioManager", return_value=mock_audio):
+             patch("prot.app.AudioManager", return_value=mock_audio), \
+             patch("prot.app.ConversationEngine", return_value=mock_engine) as mock_engine_cls, \
+             patch("prot.app.load_persona", return_value="test persona"):
             import prot.app as app_module
             app_module.pipeline = mock_pipeline
             app_module.audio = mock_audio
@@ -109,6 +115,11 @@ class TestChatWebSocket:
             assert done_msg["full_text"] == "Hello world"
 
             mock_engine.add_user_message.assert_called_once_with("hello")
+
+            # Verify channel="chat" was passed
+            mock_engine_cls.assert_called_once()
+            call_kwargs = mock_engine_cls.call_args
+            assert call_kwargs.kwargs.get("ctx") is not None
 
             # Cleanup
             app_module.pipeline = None
