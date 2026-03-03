@@ -259,7 +259,7 @@ class TestCompactionDetection:
             cm = _build_context_management()
             compact_edit = cm["edits"][2]
             assert compact_edit["type"] == "compact_20260112"
-            assert compact_edit["pause"] is True
+            assert compact_edit["pause_after_compaction"] is True
 
     async def test_last_compaction_summary_initially_none(self):
         client = LLMClient.__new__(LLMClient)
@@ -277,7 +277,7 @@ class TestCompactionDetection:
         # Simulate compaction stop reason with compaction content block
         compaction_block = MagicMock()
         compaction_block.type = "compaction"
-        compaction_block.summary = "User discussed Python debugging techniques."
+        compaction_block.content = "User discussed Python debugging techniques."
         final_msg = MagicMock()
         final_msg.content = [compaction_block]
         final_msg.stop_reason = "compaction"

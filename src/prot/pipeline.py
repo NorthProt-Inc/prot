@@ -525,6 +525,25 @@ class Pipeline:
                 pass
             self._active_timeout_task = None
 
+        # Cancel background tasks before final extraction (prevent race condition)
+        for task in self._background_tasks:
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+
+        # Best-effort shutdown summarization (must run before closing components)
+        if self._memory:
+            try:
+                messages = self._ctx.get_messages()
+                if messages:
+                    summary = await self._memory.generate_shutdown_summary(messages)
+                    if summary:
+                        extraction = await self._memory.extract_from_summary(summary)
+                        await self._memory.save_extraction(extraction)
+            except Exception:
+                logger.debug("Shutdown memory extraction failed", exc_info=True)
+
         closeables = [
             self._llm.close,
             self._tts.close,
@@ -542,25 +561,6 @@ class Pipeline:
                 await close_fn()
             except Exception:
                 logger.debug("Shutdown error", exc_info=True)
-
-        # Cancel background tasks before final extraction (prevent race condition)
-        for task in self._background_tasks:
-            task.cancel()
-        if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
-        self._background_tasks.clear()
-
-        # Best-effort shutdown summarization
-        if self._memory:
-            try:
-                messages = self._ctx.get_messages()
-                if messages:
-                    summary = await self._memory.generate_shutdown_summary(messages)
-                    if summary:
-                        extraction = await self._memory.extract_from_summary(summary)
-                        await self._memory.save_extraction(extraction)
-            except Exception:
-                logger.debug("Shutdown memory extraction failed", exc_info=True)
 
         if self._pool is not None:
             try:

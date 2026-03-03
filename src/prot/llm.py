@@ -15,7 +15,7 @@ def _build_context_management() -> dict:
         "trigger": {"type": "input_tokens", "value": settings.compaction_trigger},
     }
     if settings.pause_after_compaction:
-        compact_edit["pause"] = True
+        compact_edit["pause_after_compaction"] = True
 
     return {
         "edits": [
@@ -87,7 +87,7 @@ class LLMClient:
             if getattr(final, "stop_reason", None) == "compaction":
                 for block in final.content:
                     if getattr(block, "type", None) == "compaction":
-                        self._last_compaction_summary = getattr(block, "summary", None)
+                        self._last_compaction_summary = getattr(block, "content", None)
                         break
         except Exception:
             self._last_response_content = None
