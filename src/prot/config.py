@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     decay_base_rate: float = 0.002
     decay_min_retention: float = 0.1
 
+    # CORS
+    cors_origins: list[str] = ["http://localhost:3000"]
+
     # Logging
     log_level: str = "INFO"
 

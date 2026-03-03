@@ -6,10 +6,12 @@ import os
 import tracemalloc
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from starlette.middleware.cors import CORSMiddleware
 
 from prot.audio import AudioManager
 from prot.config import settings
+from prot.engine import BusyError, ToolIterationMarker
 from prot.logging import get_logger, setup_logging
 from prot.pipeline import Pipeline
 
@@ -50,6 +52,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health")
 async def health():
@@ -86,3 +95,46 @@ async def memory_stats():
             for s in top
         ],
     }
+
+
+@app.websocket("/chat")
+async def chat_ws(websocket: WebSocket):
+    """Text chat via shared ConversationEngine."""
+    await websocket.accept()
+    if not pipeline:
+        await websocket.send_json({"type": "error", "message": "Server not ready"})
+        await websocket.close()
+        return
+
+    engine = pipeline._engine
+    try:
+        while True:
+            data = await websocket.receive_json()
+            if data.get("type") != "message" or not data.get("content"):
+                continue
+
+            engine.add_user_message(data["content"])
+
+            try:
+                async for item in engine.respond():
+                    if isinstance(item, ToolIterationMarker):
+                        continue
+                    await websocket.send_json({"type": "chunk", "content": item})
+
+                result = engine.last_result
+                await websocket.send_json(
+                    {"type": "done", "full_text": result.full_text if result else ""}
+                )
+            except BusyError:
+                await websocket.send_json(
+                    {"type": "error", "message": "Engine is busy (voice active)"}
+                )
+            except Exception as exc:
+                logger.exception("Chat respond error")
+                await websocket.send_json(
+                    {"type": "error", "message": str(exc)}
+                )
+    except WebSocketDisconnect:
+        logger.info("Chat WebSocket disconnected")
+    except Exception:
+        logger.exception("Chat WebSocket error")
