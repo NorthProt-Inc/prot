@@ -21,6 +21,8 @@ class ContextManager:
         self._rag_context = rag_context
         self._channel = channel
         self._messages: list[dict] = []
+        self._session_start: datetime = datetime.now(LOCAL_TZ)
+        self._message_times: list[tuple[str, datetime]] = []
 
     def build_system_blocks(self) -> list[dict]:
         """Build 3-block system prompt with cache control.
@@ -43,15 +45,31 @@ class ContextManager:
             "text": self._rag_context or "(no additional context)",
             "cache_control": {"type": "ephemeral"},
         }
+        now = datetime.now(LOCAL_TZ)
+        block3_text = (
+            f"datetime: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"timezone: America/Vancouver\n"
+            f"channel: {self._channel}"
+        )
+        timeline = self._build_timeline()
+        if timeline:
+            block3_text += f"\n{timeline}"
         block3_dynamic: dict = {
             "type": "text",
-            "text": (
-                f"datetime: {datetime.now(LOCAL_TZ).strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"timezone: America/Vancouver\n"
-                f"channel: {self._channel}"
-            ),
+            "text": block3_text,
         }
         return [block1_persona, block2_rag, block3_dynamic]
+
+    def _build_timeline(self) -> str:
+        """Build session timeline for Block 3 temporal context."""
+        if not self._message_times:
+            return ""
+        lines = [f"session_start: {self._session_start.strftime('%Y-%m-%d %H:%M:%S')}"]
+        recent = self._message_times[-10:]
+        lines.append("recent_turns:")
+        for role, ts in recent:
+            lines.append(f"  - {ts.strftime('%H:%M')} {role}")
+        return "\n".join(lines)
 
     def build_tools(self, hass_agent=None) -> list[dict]:
         """Build tool definitions with cache on last tool."""
@@ -79,7 +97,10 @@ class ContextManager:
 
     def add_message(self, role: str, content: str | list) -> None:
         """Append a message. Content can be str or list of content blocks."""
-        self._messages.append({"role": role, "content": content})
+        msg = {"role": role, "content": content}
+        self._messages.append(msg)
+        if not is_tool_result_message(msg):
+            self._message_times.append((role, datetime.now(LOCAL_TZ)))
 
     def get_messages(self) -> list[dict]:
         """Return a copy of the conversation history."""

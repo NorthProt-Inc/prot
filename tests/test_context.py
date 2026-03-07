@@ -131,6 +131,47 @@ class TestContextManager:
         assert isinstance(history[1]["content"], list)
 
 
+class TestBlock3Timeline:
+    def test_block3_contains_session_start_after_messages(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        cm.add_message("user", "hello")
+        blocks = cm.build_system_blocks()
+        assert "session_start:" in blocks[2]["text"]
+
+    def test_block3_contains_recent_turns(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        cm.add_message("user", "hello")
+        cm.add_message("assistant", "hi")
+        blocks = cm.build_system_blocks()
+        text = blocks[2]["text"]
+        assert "recent_turns:" in text
+        assert "user" in text
+        assert "assistant" in text
+
+    def test_block3_no_timeline_without_messages(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        blocks = cm.build_system_blocks()
+        assert "session_start:" not in blocks[2]["text"]
+        assert "recent_turns:" not in blocks[2]["text"]
+
+    def test_message_times_excludes_tool_results(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        cm.add_message("user", "hello")
+        cm.add_message("assistant", "thinking...")
+        cm.add_message("user", [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}])
+        cm.add_message("assistant", "done")
+        assert len(cm._message_times) == 3  # user, assistant, assistant (not tool_result)
+
+    def test_recent_turns_limited_to_last_10(self):
+        cm = ContextManager(persona_text="test", rag_context="")
+        for i in range(20):
+            cm.add_message("user", f"msg-{i}")
+            cm.add_message("assistant", f"resp-{i}")
+        blocks = cm.build_system_blocks()
+        lines = [l for l in blocks[2]["text"].split("\n") if l.strip().startswith("- ")]
+        assert len(lines) == 10
+
+
 class TestGetRecentMessages:
     """get_recent_messages() — return all messages with orphan boundary correction."""
 
