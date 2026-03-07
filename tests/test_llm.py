@@ -261,6 +261,22 @@ class TestCompactionDetection:
             assert compact_edit["type"] == "compact_20260112"
             assert compact_edit["pause_after_compaction"] is True
 
+    async def test_compaction_edit_includes_instructions(self):
+        """Compaction edit should include instructions for temporal preservation."""
+        with patch("prot.llm.settings") as ms:
+            ms.thinking_keep_turns = 2
+            ms.tool_clear_trigger = 30000
+            ms.tool_clear_keep = 3
+            ms.compaction_trigger = 50000
+            ms.pause_after_compaction = True
+
+            from prot.llm import _build_context_management
+            cm = _build_context_management()
+            compact_edit = cm["edits"][2]
+            assert "instructions" in compact_edit
+            assert isinstance(compact_edit["instructions"], str)
+            assert len(compact_edit["instructions"]) > 0
+
     async def test_last_compaction_summary_initially_none(self):
         client = LLMClient.__new__(LLMClient)
         client._last_compaction_summary = None

@@ -13,6 +13,13 @@ def _build_context_management() -> dict:
     compact_edit = {
         "type": "compact_20260112",
         "trigger": {"type": "input_tokens", "value": settings.compaction_trigger},
+        "instructions": (
+            "Summarize this conversation preserving: "
+            "(1) temporal markers — when topics changed, time references by either party, "
+            "day boundaries, and session gaps with approximate timestamps; "
+            "(2) key facts, decisions, and user preferences; "
+            "(3) emotional context and relationship dynamics."
+        ),
     }
     if settings.pause_after_compaction:
         compact_edit["pause_after_compaction"] = True
