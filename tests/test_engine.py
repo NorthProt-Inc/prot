@@ -264,6 +264,74 @@ class TestAddUserMessage:
         engine._ctx.add_message.assert_called_once_with("user", "hello")
 
 
+class TestRAGLoading:
+    def test_no_rag_task_without_memory(self):
+        engine = _make_engine()
+        engine.add_user_message("hello")
+        assert engine._pending_rag is None
+
+    async def test_rag_task_started_with_memory(self):
+        memory = AsyncMock()
+        memory.pre_load_context = AsyncMock(return_value="[semantic] fact")
+        engine = _make_engine(memory=memory)
+        engine.add_user_message("hello")
+        assert engine._pending_rag is not None
+        await engine._pending_rag
+        engine._ctx.update_rag_context.assert_called_once_with("[semantic] fact")
+
+    async def test_rag_applied_before_respond(self):
+        memory = AsyncMock()
+        memory.pre_load_context = AsyncMock(return_value="[semantic] fact")
+
+        engine = _make_engine(memory=memory)
+
+        async def fake_stream(*a, **kw):
+            yield "ok"
+
+        engine._llm.stream_response = fake_stream
+        engine.add_user_message("hello")
+
+        async for _ in engine.respond():
+            pass
+
+        engine._ctx.update_rag_context.assert_called()
+
+    async def test_rag_failure_does_not_crash_respond(self):
+        memory = AsyncMock()
+        memory.pre_load_context = AsyncMock(side_effect=RuntimeError("embed failed"))
+
+        engine = _make_engine(memory=memory)
+
+        async def fake_stream(*a, **kw):
+            yield "ok"
+
+        engine._llm.stream_response = fake_stream
+        engine.add_user_message("hello")
+
+        async for _ in engine.respond():
+            pass
+
+        assert engine.last_result.full_text == "ok"
+        assert engine.last_result.interrupted is False
+
+    async def test_pending_rag_cleared_after_respond(self):
+        memory = AsyncMock()
+        memory.pre_load_context = AsyncMock(return_value="context")
+
+        engine = _make_engine(memory=memory)
+
+        async def fake_stream(*a, **kw):
+            yield "ok"
+
+        engine._llm.stream_response = fake_stream
+        engine.add_user_message("hello")
+
+        async for _ in engine.respond():
+            pass
+
+        assert engine._pending_rag is None
+
+
 class TestShutdownSummarize:
     async def test_extracts_memories_on_shutdown(self):
         memory = AsyncMock()

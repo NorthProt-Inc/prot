@@ -63,6 +63,7 @@ class ConversationEngine:
         self._last_result: ResponseResult | None = None
         self._background_tasks: set[asyncio.Task] = set()
         self._conversation_id = str(uuid.uuid4())
+        self._pending_rag: asyncio.Task | None = None
 
     @property
     def busy(self) -> bool:
@@ -103,6 +104,10 @@ class ConversationEngine:
         if self._error_backoff > 0:
             logger.info("Error backoff: sleeping %.1fs", self._error_backoff)
             await asyncio.sleep(self._error_backoff)
+
+        if self._pending_rag is not None:
+            await self._pending_rag
+            self._pending_rag = None
 
         system_blocks = self._ctx.build_system_blocks()
         tools = self._ctx.build_tools(hass_agent=self._hass_agent)
@@ -199,6 +204,14 @@ class ConversationEngine:
             return
         self._bg(self._process_compaction(summary))
 
+    async def _preload_rag(self, query: str) -> None:
+        """Background RAG context loading — errors are swallowed."""
+        try:
+            rag = await self._memory.pre_load_context(query)
+            self._ctx.update_rag_context(rag)
+        except Exception:
+            logger.warning("RAG preload failed", exc_info=True)
+
     async def _process_compaction(self, summary: str) -> None:
         try:
             extraction = await self._memory.extract_from_summary(summary)
@@ -209,6 +222,8 @@ class ConversationEngine:
     def add_user_message(self, text: str) -> None:
         self._ctx.add_message("user", text)
         self._save_message_bg("user", text)
+        if self._memory:
+            self._pending_rag = self._bg(self._preload_rag(text))
 
     def cancel(self) -> None:
         self._llm.cancel()
