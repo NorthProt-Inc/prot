@@ -112,7 +112,9 @@ class ConversationEngine:
         system_blocks = self._ctx.build_system_blocks()
         tools = self._ctx.build_tools(hass_agent=self._hass_agent)
 
-        for iteration in range(_MAX_TOOL_ITERATIONS):
+        # +1 so the final iteration can produce a text response after
+        # the last tool execution (tool calls are capped at _MAX_TOOL_ITERATIONS).
+        for iteration in range(_MAX_TOOL_ITERATIONS + 1):
             messages = self._ctx.get_recent_messages()
 
             async for chunk in self._llm.stream_response(
@@ -141,6 +143,15 @@ class ConversationEngine:
                 )
                 return
 
+            if iteration >= _MAX_TOOL_ITERATIONS:
+                # All tool iterations spent — commit whatever text we have
+                logger.error("Tool loop exhausted after %d iterations", _MAX_TOOL_ITERATIONS)
+                full_text = self._commit_response()
+                self._last_result = ResponseResult(
+                    full_text=full_text, interrupted=False
+                )
+                return
+
             # Tool use — commit partial response, signal callers, execute
             self._commit_response()
             yield ToolIterationMarker(iteration=iteration)
@@ -154,12 +165,6 @@ class ConversationEngine:
                 return
 
             self._response_parts = []
-
-        # Loop exhaustion
-        logger.error("Tool loop exhausted after %d iterations", _MAX_TOOL_ITERATIONS)
-        self._last_result = ResponseResult(
-            full_text="".join(self._response_parts), interrupted=False
-        )
 
     def _commit_response(self) -> str:
         full_text = "".join(self._response_parts)
